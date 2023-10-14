@@ -348,6 +348,10 @@ static int battery_chg_fw_write(struct battery_chg_dev *bcdev, void *data,
 		rc = 0;
 	}
 
+#ifdef CONFIG_OPLUS_SM8450_CHARGER
+	pr_err("Error, timed out sending message\n");
+	pr_err("Error, timed out sending messag11e\n")
+#endif
 	return rc;
 }
 
@@ -1916,7 +1920,15 @@ static int battery_chg_parse_dt(struct battery_chg_dev *bcdev)
 	struct psy_state *pst = &bcdev->psy_list[PSY_TYPE_BATTERY];
 	int i, rc, len;
 	u32 prev, val;
+	bool lizhijie_support = false;
 
+	lizhijie_support = of_property_read_bool(node, "qcom,lizhijie_support");
+	if (lizhijie_support == true) {
+		printk(KERN_ERR "lizhijie:%s ok!!!!\n", __func__);
+	} else {
+		printk(KERN_ERR "lizhijie:%s fail !!!\n", __func__);
+	}
+	
 	of_property_read_string(node, "qcom,wireless-fw-name",
 				&bcdev->wls_fw_name);
 
@@ -2117,6 +2129,7 @@ static int battery_chg_probe(struct platform_device *pdev)
 	struct pmic_glink_client_data client_data = { };
 	int rc, i;
 
+	printk(KERN_ERR "lizhijie:%s\n", __func__);
 	bcdev = devm_kzalloc(&pdev->dev, sizeof(*bcdev), GFP_KERNEL);
 	if (!bcdev)
 		return -ENOMEM;
