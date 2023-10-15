@@ -670,7 +670,7 @@ endif
 ifeq ($(KBUILD_EXTMOD),)
 # Objects we will link into vmlinux / subdirs we need to visit
 core-y		:= init/ usr/
-drivers-y	:= drivers/ sound/ techpack/
+drivers-y	:= drivers/ sound/
 drivers-$(CONFIG_SAMPLES) += samples/
 drivers-y	+= net/ virt/
 libs-y		:= lib/
@@ -1193,9 +1193,6 @@ export MODULES_NSDEPS := $(extmod-prefix)modules.nsdeps
 
 PHONY += headers
 
-techpack-dirs := $(shell find $(srctree)/techpack -maxdepth 1 -mindepth 1 -type d -not -name ".*")
-techpack-dirs := $(subst $(srctree)/,,$(techpack-dirs))
-
 #Default location for installed headers
 ifeq ($(KBUILD_EXTMOD),)
 PHONY += archheaders archscripts
@@ -1225,9 +1222,6 @@ ifeq ($(KBUILD_EXTMOD),)
 endif
 	$(Q)$(MAKE) $(hdr-inst)=$(hdr-prefix)include/uapi
 	$(Q)$(MAKE) $(hdr-inst)=$(hdr-prefix)arch/$(SRCARCH)/include/uapi
-	$(Q)for d in $(techpack-dirs); do \
-		$(MAKE) $(hdr-inst)=$$d/include/uapi; \
-	done
 
 # ---------------------------------------------------------------------------
 # Devicetree files
@@ -1470,14 +1464,6 @@ PHONY += headerdep
 headerdep:
 	$(Q)find $(srctree)/include/ -name '*.h' | xargs --max-args 1 \
 	$(srctree)/scripts/headerdep.pl -I$(srctree)/include
-
-# Deprecated. It is no-op now.
-PHONY += headers_check
-headers_check:
-	@:
-	$(Q)for d in $(techpack-dirs); do \
-		$(MAKE) $(hdr-inst)=$$d/include/uapi HDRCHECK=1; \
-	done
 
 ifdef CONFIG_HEADERS_INSTALL
 prepare: headers
