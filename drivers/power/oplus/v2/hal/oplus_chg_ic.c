@@ -745,11 +745,17 @@ int oplus_chg_ic_clean_err_msg(struct oplus_chg_ic_dev *ic_dev,
 	return 0;
 }
 
+#ifdef CONFIG_OPLUS_CHG_IC_DEBUG
 const char *oplus_chg_ic_err_text(enum oplus_chg_ic_err err_type)
 {
 	return err_type_text[err_type];
 }
-
+#else
+const char *oplus_chg_ic_err_text(enum oplus_chg_ic_err err_type)
+{
+  return "no debug";
+}
+#endif
 static struct oplus_chg_ic_dev *
 __oplus_chg_ic_register(struct device *dev, struct oplus_chg_ic_cfg *cfg)
 {
