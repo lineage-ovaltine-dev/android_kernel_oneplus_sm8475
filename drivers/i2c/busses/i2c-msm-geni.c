@@ -1887,7 +1887,6 @@ static int geni_i2c_runtime_suspend(struct device *dev)
 					return ret;
 				}
 			}
-		}
 	} else if (gi2c->is_shared) {
 		/* Do not unconfigure GPIOs if shared se */
 		se_geni_clks_off(&gi2c->i2c_rsc);
