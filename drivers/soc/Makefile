@@ -35,7 +35,7 @@ obj-$(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)	+= oplus/multimedia/
 #endif /* OPLUS_FEATURE_MM_FEEDBACK */
 
 #ifdef OPLUS_FEATURE_TP_BASIC
-obj-$(CONFIG_OPLUS_DEVICE_IFNO)  +=  oplus/device_info/
+obj-$(CONFIG_OPLUS_DEVICE_INFO)  +=  oplus/device_info/
 #endif /* OPLUS_FEATURE_TP_BASIC */
 
 $(warning MSM_ARCH: -$(MSM_ARCH)-)
