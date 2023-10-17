@@ -4253,9 +4253,6 @@ void icnss_add_fw_prefix_name(struct icnss_priv *priv, char *prefix_name,
 	else
 		scnprintf(prefix_name, ICNSS_MAX_FILE_NAME,
 			  QCA6750_PATH_PREFIX "%s", name);
-	else if (priv->device_id == WCN6450_DEVICE_ID)
-		scnprintf(prefix_name, ICNSS_MAX_FILE_NAME,
-			  WCN6450_PATH_PREFIX "%s", name);
 
 #ifdef OPLUS_FEATURE_WIFI_BDF
     scnprintf(prefix_name, ICNSS_MAX_FILE_NAME, "%s", name);

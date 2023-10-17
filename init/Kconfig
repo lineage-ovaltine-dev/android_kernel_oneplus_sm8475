@@ -47,12 +47,6 @@ config AS_IS_GNU
 config AS_IS_LLVM
 	def_bool $(success,test "$(as-name)" = LLVM)
 
-config AS_VERSION
-	int
-	# Use clang version if this is the integrated assembler
-	default CLANG_VERSION if AS_IS_LLVM
-	default $(as-version)
-
 config LD_IS_BFD
 	def_bool $(success,test "$(ld-name)" = BFD)
 

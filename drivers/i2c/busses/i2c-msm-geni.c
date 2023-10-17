@@ -1333,39 +1333,6 @@ static int geni_i2c_xfer(struct i2c_adapter *adap,
 			return ret;
 		}
 	}
-
-	if (gi2c->is_le_vm && (!gi2c->first_xfer_done)) {
-		/*
-		 * For le-vm we are doing resume operations during
-		 * the first xfer, because we are seeing probe sequence
-		 * issues from client and i2c-master driver, due to this
-		 * multiple times i2c_resume invoking and we are seeing
-		 * unclocked access. To avoid this added resume operations
-		 * here very first time.
-		 */
-		gi2c->first_xfer_done = true;
-		ret = geni_i2c_prepare(gi2c);
-		if (ret) {
-			I2C_LOG_ERR(gi2c->ipcl, true, gi2c->dev,
-				"%s I2C prepare failed: %d\n", __func__, ret);
-			return ret;
-		}
-		if (gi2c->se_mode == GSI_ONLY) {
-			ret = geni_i2c_gpi_pause_resume(gi2c, false);
-			if (ret) {
-				I2C_LOG_ERR(gi2c->ipcl, false, gi2c->dev, "%s\n", __func__);
-				return ret;
-			}
-		}
-		ret = geni_i2c_lock_bus(gi2c);
-		if (ret) {
-			I2C_LOG_ERR(gi2c->ipcl, true, gi2c->dev,
-				"%s lock failed: %d\n", __func__, ret);
-			return ret;
-		}
-		I2C_LOG_DBG(gi2c->ipcl, false, gi2c->dev,
-			"LE-VM first xfer\n");
-	}
 	// WAR : Complete previous pending cancel cmd
 	if (gi2c->prev_cancel_pending) {
 		ret = do_pending_cancel(gi2c);
