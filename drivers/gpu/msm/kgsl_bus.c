@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/interconnect.h>
@@ -12,8 +12,6 @@
 #include "kgsl_device.h"
 #include "kgsl_trace.h"
 
-#define ACTIVE_ALWAYS_TAG 0x7
-#define PERF_MODE_TAG   0x8
 
 static u32 _ab_buslevel_update(struct kgsl_pwrctrl *pwr,
 		u32 ib)
@@ -34,12 +32,24 @@ static u32 _ab_buslevel_update(struct kgsl_pwrctrl *pwr,
 	return (pwr->bus_percent_ab * pwr->bus_max) / 100;
 }
 
+#define ACTIVE_ONLY_TAG 0x3
+#define PERF_MODE_TAG   0x8
+
 int kgsl_bus_update(struct kgsl_device *device,
 			 enum kgsl_bus_vote vote_state)
 {
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
-	int buslevel;
+	/* FIXME: this might be wrong? */
+	int cur = pwr->pwrlevels[pwr->active_pwrlevel].bus_freq;
+	int buslevel = 0;
 	u32 ab;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_KGSL_BUS_NOLIMIT)
+	int cur_buslevel = pwr->cur_buslevel;
+
+	if (pwr->bus_nolimit) {
+		cur = max_t(int, cur, cur_buslevel);
+	}
+#endif /* CONFIG_OPLUS_FEATURE_KGSL_BUS_NOLIMIT */
 
 	/* the bus should be ON to update the active frequency */
 	if ((vote_state != KGSL_BUS_VOTE_OFF) &&
@@ -49,61 +59,32 @@ int kgsl_bus_update(struct kgsl_device *device,
 	 * If the bus should remain on calculate our request and submit it,
 	 * otherwise request bus level 0, off.
 	 */
-	switch (vote_state) {
-	case KGSL_BUS_VOTE_OFF:
-		/* If the bus is being turned off, reset to default level */
-		pwr->cur_dcvs_buslevel = 0;
-		pwr->bus_mod = 0;
-		pwr->bus_percent_ab = 0;
-		pwr->bus_ab_mbytes = 0;
-		ab = 0;
-		break;
-	case KGSL_BUS_VOTE_ON:
-		{
-		/* FIXME: this might be wrong? */
-		int cur = pwr->pwrlevels[pwr->active_pwrlevel].bus_freq;
-
+	if (vote_state == KGSL_BUS_VOTE_ON) {
 		buslevel = min_t(int, pwr->pwrlevels[0].bus_max,
 				cur + pwr->bus_mod);
 		buslevel = max_t(int, buslevel, 1);
-		pwr->cur_dcvs_buslevel = buslevel;
-		ab = _ab_buslevel_update(pwr, pwr->ddr_table[buslevel]);
-		break;
-		}
-	case KGSL_BUS_VOTE_MINIMUM:
+	} else if (vote_state == KGSL_BUS_VOTE_MINIMUM) {
 		/* Request bus level 1, minimum non-zero value */
-		pwr->cur_dcvs_buslevel = 1;
+		buslevel = 1;
 		pwr->bus_mod = 0;
 		pwr->bus_percent_ab = 0;
 		pwr->bus_ab_mbytes = 0;
-		ab = _ab_buslevel_update(pwr,
-			pwr->ddr_table[pwr->cur_dcvs_buslevel]);
-		break;
-	case KGSL_BUS_VOTE_RT_HINT_ON:
-		pwr->rt_bus_hint_active = true;
-		/* Only update IB during bus hint */
-		ab = pwr->cur_ab;
-		break;
-	case KGSL_BUS_VOTE_RT_HINT_OFF:
-		pwr->rt_bus_hint_active = false;
-		/* Only update IB during bus hint */
-		ab = pwr->cur_ab;
-		break;
+	} else if (vote_state == KGSL_BUS_VOTE_OFF) {
+		/* If the bus is being turned off, reset to default level */
+		pwr->bus_mod = 0;
+		pwr->bus_percent_ab = 0;
+		pwr->bus_ab_mbytes = 0;
 	}
 
-	buslevel = pwr->rt_bus_hint_active ?
-		max(pwr->cur_dcvs_buslevel, pwr->rt_bus_hint) :
-		pwr->cur_dcvs_buslevel;
+	/* buslevel is the IB vote, update the AB */
+	ab = _ab_buslevel_update(pwr, pwr->ddr_table[buslevel]);
+
+	if (buslevel == pwr->pwrlevels[0].bus_max)
+		icc_set_tag(pwr->icc_path, ACTIVE_ONLY_TAG | PERF_MODE_TAG);
+	else
+		icc_set_tag(pwr->icc_path, ACTIVE_ONLY_TAG);
 
 	return device->ftbl->gpu_bus_set(device, buslevel, ab);
-}
-
-void kgsl_icc_set_tag(struct kgsl_pwrctrl *pwr, int buslevel)
-{
-	if (buslevel == pwr->pwrlevels[0].bus_max)
-		icc_set_tag(pwr->icc_path, ACTIVE_ALWAYS_TAG | PERF_MODE_TAG);
-	else
-		icc_set_tag(pwr->icc_path, ACTIVE_ALWAYS_TAG);
 }
 
 static void validate_pwrlevels(struct kgsl_device *device, u32 *ibs,
@@ -210,5 +191,4 @@ void kgsl_bus_close(struct kgsl_device *device)
 	kfree(device->pwrctrl.ddr_table);
 	device->pwrctrl.ddr_table = NULL;
 	icc_put(device->pwrctrl.icc_path);
-	device->pwrctrl.icc_path = NULL;
 }

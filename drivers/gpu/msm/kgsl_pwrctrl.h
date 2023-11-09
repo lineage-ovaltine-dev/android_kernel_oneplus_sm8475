@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2010-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef __KGSL_PWRCTRL_H
 #define __KGSL_PWRCTRL_H
@@ -12,7 +12,7 @@
 /*****************************************************************************
  * power flags
  ****************************************************************************/
-#define KGSL_MAX_CLKS 19
+#define KGSL_MAX_CLKS 18
 
 #define KGSL_MAX_PWRLEVELS 16
 
@@ -95,6 +95,7 @@ struct kgsl_pwrlevel {
  * @clk_stats - structure of clock statistics
  * @input_disable - To disable GPU wakeup on touch input event
  * @bus_control - true if the bus calculation is independent
+ * @bus_nolimit - true if the bus vote freq not limit in opp table
  * @bus_mod - modifier from the current power level for the bus vote
  * @bus_percent_ab - current percent of total possible bus usage
  * @bus_width - target specific bus width in number of bytes
@@ -137,6 +138,9 @@ struct kgsl_pwrctrl {
 	u64 clock_times[KGSL_MAX_PWRLEVELS];
 	struct kgsl_clk_stats clk_stats;
 	bool bus_control;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_KGSL_BUS_NOLIMIT)
+	bool bus_nolimit;
+#endif /* CONFIG_OPLUS_FEATURE_KGSL_BUS_NOLIMIT */
 	int bus_mod;
 	unsigned int bus_percent_ab;
 	unsigned int bus_width;
@@ -169,12 +173,6 @@ struct kgsl_pwrctrl {
 	ktime_t last_stat_updated;
 	/** @nb_max: Notifier block for DEV_PM_QOS_MAX_FREQUENCY */
 	struct notifier_block nb_max;
-	/** @cur_dcvs_buslevel: Current bus level decided by bus DCVS */
-	u32 cur_dcvs_buslevel;
-	/** @rt_bus_hint: IB level hint for real time clients i.e. RB-0 */
-	u32 rt_bus_hint;
-	/** @rt_bus_hint_active: Boolean flag to indicate if RT bus hint is active */
-	bool rt_bus_hint_active;
 };
 
 int kgsl_pwrctrl_init(struct kgsl_device *device);

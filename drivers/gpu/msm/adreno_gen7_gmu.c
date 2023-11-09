@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <dt-bindings/regulator/qcom,rpmh-regulator-levels.h>
@@ -803,7 +803,6 @@ void gen7_gmu_version_info(struct adreno_device *adreno_dev)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	struct gen7_gmu_device *gmu = to_gen7_gmu(adreno_dev);
-	const struct adreno_gen7_core *gen7_core = to_gen7_core(adreno_dev);
 
 	/* GMU version info is at a fixed offset in the DTCM */
 	gmu_core_regread(device, GEN7_GMU_CM3_DTCM_START + 0xff8,
@@ -816,12 +815,6 @@ void gen7_gmu_version_info(struct adreno_device *adreno_dev)
 			&gmu->ver.pwr_dev);
 	gmu_core_regread(device, GEN7_GMU_CM3_DTCM_START + 0xffc,
 			&gmu->ver.hfi);
-
-	/* Check gmu fw on device is up to date with minimum required version */
-	if (gmu->ver.core < gen7_core->gmu_fw_version)
-		dev_err(&gmu->pdev->dev,
-			"GMU FW version 0x%x does not satisfy the required minimum (0x%x)\n",
-			gmu->ver.core, gen7_core->gmu_fw_version);
 }
 
 int gen7_gmu_itcm_shadow(struct adreno_device *adreno_dev)
@@ -2045,8 +2038,6 @@ static int gen7_gmu_bus_set(struct adreno_device *adreno_dev, int buslevel,
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
 	int ret = 0;
 
-	kgsl_icc_set_tag(pwr, buslevel);
-
 	if (buslevel != pwr->cur_buslevel) {
 		ret = gen7_gmu_dcvs_set(adreno_dev, INVALID_DCVS_IDX, buslevel);
 		if (ret)
@@ -2320,8 +2311,7 @@ void gen7_gmu_remove(struct kgsl_device *device)
 	gen7_free_gmu_globals(gmu);
 
 	vfree(gmu->itcm_shadow);
-	if (gmu->log_kobj.state_initialized)
-		kobject_put(&gmu->log_kobj);
+	kobject_put(&gmu->log_kobj);
 }
 
 static int gen7_gmu_iommu_fault_handler(struct iommu_domain *domain,
@@ -2624,7 +2614,7 @@ static int gen7_gpu_boot(struct adreno_device *adreno_dev)
 
 	gen7_start(adreno_dev);
 
-	if (gen7_core->qos_value && adreno_is_preemption_enabled(adreno_dev))
+	if (gen7_core->qos_value)
 		kgsl_regwrite(device, GEN7_RBBM_GBIF_CLIENT_QOS_CNTL,
 			gen7_core->qos_value[adreno_dev->cur_rb->id]);
 
@@ -3115,10 +3105,8 @@ int gen7_gmu_device_probe(struct platform_device *pdev,
 		return ret;
 
 	ret = adreno_dispatcher_init(adreno_dev);
-	if (ret) {
-		dev_err(&pdev->dev, "adreno_dispatcher_init failed ret %d\n", ret);
+	if (ret)
 		return ret;
-	}
 
 	device = KGSL_DEVICE(adreno_dev);
 
