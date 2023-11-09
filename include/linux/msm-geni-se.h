@@ -72,6 +72,10 @@ struct se_geni_rsc {
 	struct pinctrl_state *geni_gpio_shutdown;
 	struct pinctrl_state *geni_gpio_active;
 	struct pinctrl_state *geni_gpio_sleep;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	struct pinctrl_state *geni_gpio_pulldown;
+	struct pinctrl_state *geni_gpio_pullup;
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 	int	clk_freq_out;
 	unsigned int num_clk_levels;
 	unsigned long *clk_perf_tbl;
@@ -83,6 +87,10 @@ struct se_geni_rsc {
 #define PINCTRL_ACTIVE	"active"
 #define PINCTRL_SLEEP	"sleep"
 #define PINCTRL_SHUTDOWN	"shutdown"
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define PINCTRL_PULLDOWN	"pulldown"
+#define PINCTRL_PULLUP		"pullup"
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 
 #define KHz(freq) (1000 * (freq))
 
@@ -130,7 +138,6 @@ struct se_geni_rsc {
 #define SE_IRQ_EN			(0xE1C)
 #define SE_HW_PARAM_0			(0xE24)
 #define SE_HW_PARAM_1			(0xE28)
-#define SE_HW_PARAM_2			(0xE2C)
 #define SE_DMA_GENERAL_CFG		(0xE30)
 #define SE_DMA_DEBUG_REG0		(0xE40)
 #define QUPV3_HW_VER			(0x4)
@@ -293,9 +300,6 @@ struct se_geni_rsc {
 #define RX_FIFO_WIDTH_SHFT	(24)
 #define RX_FIFO_DEPTH_MSK	(GENMASK(21, 16))
 #define RX_FIFO_DEPTH_SHFT	(16)
-
-/* SE_HW_PARAM_2 fields */
-#define GEN_HW_FSM_I2C		(BIT(15))
 
 /* SE_DMA_GENERAL_CFG */
 #define DMA_RX_CLK_CGC_ON	(BIT(0))
