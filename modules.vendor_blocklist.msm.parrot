@@ -64,4 +64,3 @@ blocklist locktorture
 blocklist rcutorture
 blocklist mmrm_test_module
 blocklist limits_stat
-blocklist limits_stress
