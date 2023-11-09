@@ -573,6 +573,7 @@ static int sysmon_start(struct rproc_subdev *subdev)
 	struct qcom_sysmon *sysmon = container_of(subdev, struct qcom_sysmon,
 						  subdev);
 	struct qcom_sysmon *target;
+	struct rproc *rproc = sysmon->rproc;
 
 	trace_rproc_qcom_event(dev_name(sysmon->rproc->dev.parent), SYSMON_SUBDEV_NAME, "start");
 
@@ -594,6 +595,7 @@ static int sysmon_start(struct rproc_subdev *subdev)
 		mutex_unlock(&target->state_lock);
 	}
 	mutex_unlock(&sysmon_lock);
+	pm_relax(rproc->dev.parent);
 
 	return 0;
 }
@@ -623,14 +625,14 @@ static void sysmon_stop(struct rproc_subdev *subdev, bool crashed)
 	if (crashed)
 		return;
 
+	sysmon->timeout_data.timer.function = sysmon_shutdown_notif_timeout_handler;
+	timeout = jiffies + msecs_to_jiffies(SYSMON_NOTIF_TIMEOUT);
+	mod_timer(&sysmon->timeout_data.timer, timeout);
+
 	if (sysmon->ssctl_instance) {
 		if (!wait_for_completion_timeout(&sysmon->ssctl_comp, HZ / 2))
 			dev_err(sysmon->dev, "timeout waiting for ssctl service\n");
 	}
-
-	sysmon->timeout_data.timer.function = sysmon_shutdown_notif_timeout_handler;
-	timeout = jiffies + msecs_to_jiffies(SYSMON_NOTIF_TIMEOUT);
-	mod_timer(&sysmon->timeout_data.timer, timeout);
 
 	if (sysmon->ssctl_version)
 		sysmon->shutdown_acked = ssctl_request_shutdown(sysmon);

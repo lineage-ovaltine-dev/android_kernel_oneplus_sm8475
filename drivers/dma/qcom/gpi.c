@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/atomic.h>
@@ -454,6 +453,7 @@ struct gpi_dev {
 	u32 ipc_log_lvl;
 	u32 klog_lvl;
 	struct dentry *dentry;
+	bool is_le_vm;
 };
 
 static struct gpi_dev *gpi_dev_dbg[5];
@@ -595,7 +595,6 @@ struct gpii {
 	u32 dbg_gpi_irq_cnt;
 	bool unlock_tre_set;
 	bool dual_ee_sync_flag;
-	bool is_resumed;
 };
 
 struct gpi_desc {
@@ -745,11 +744,8 @@ static void gpi_dump_debug_reg(struct gpii *gpii)
 
 	/* log gpii cntxt */
 	reg_info = dbg_reg_table->gpii_cntxt;
-	for (; reg_info->name; reg_info++) {
+	for (; reg_info->name; reg_info++)
 		reg_info->val = readl_relaxed(gpii->regs + reg_info->offset);
-		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_cntxt Reg:%s addr:0x%x->val:0x%x\n",
-			 reg_info->name, reg_info->offset, reg_info->val);
-	}
 
 	if (!dbg_reg_table->ev_cntxt_info) {
 		dbg_reg_table->ev_cntxt_info =
@@ -762,12 +758,9 @@ static void gpi_dump_debug_reg(struct gpii *gpii)
 
 	/* log ev cntxt */
 	reg_info = dbg_reg_table->ev_cntxt_info;
-	for (; reg_info->name; reg_info++) {
+	for (; reg_info->name; reg_info++)
 		reg_info->val = readl_relaxed(gpii->ev_cntxt_base_reg +
 					      reg_info->offset);
-		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_ev_cntxt Reg:%s addr:0x%x->val:0x%x\n",
-			 reg_info->name, reg_info->offset, reg_info->val);
-	}
 
 	/* dump channel cntxt registers */
 	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
@@ -781,16 +774,11 @@ static void gpi_dump_debug_reg(struct gpii *gpii)
 				sizeof(gpi_debug_ch_cntxt));
 		}
 		reg_info = dbg_reg_table->chan[chan];
-		for (; reg_info->name; reg_info++) {
+		for (; reg_info->name; reg_info++)
 			reg_info->val =
 			readl_relaxed(
 			gpii->gpii_chan[chan].ch_cntxt_base_reg +
 							reg_info->offset);
-			GPII_ERR(gpii, GPI_DBG_COMMON,
-				 "GPI_ch%d Reg:%s addr:0x%x->val:0x%x\n",
-				 chan, reg_info->name, reg_info->offset,
-				 reg_info->val);
-		}
 	}
 
 	if (!dbg_reg_table->gpi_debug_regs) {
@@ -804,12 +792,9 @@ static void gpi_dump_debug_reg(struct gpii *gpii)
 
 	/* log debug register */
 	reg_info = dbg_reg_table->gpi_debug_regs;
-	for (; reg_info->name; reg_info++) {
+	for (; reg_info->name; reg_info++)
 		reg_info->val = readl_relaxed(gpii->gpi_dev->regs +
 					reg_info->offset);
-		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_dbg Reg:%s addr:0x%x->val:0x%x\n",
-			 reg_info->name, reg_info->offset, reg_info->val);
-	}
 
 	if (!dbg_reg_table->gpi_debug_qsb_regs) {
 		dbg_reg_table->gpi_debug_qsb_regs =
@@ -823,28 +808,17 @@ static void gpi_dump_debug_reg(struct gpii *gpii)
 
 	/* log QSB register */
 	reg_info = dbg_reg_table->gpi_debug_qsb_regs;
-	for (; reg_info->name; reg_info++) {
+	for (; reg_info->name; reg_info++)
 		reg_info->val = readl_relaxed(gpii->gpi_dev->regs +
 					reg_info->offset);
-		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_qsb Reg:%s addr:0x%x->val:0x%x\n",
-			 reg_info->name, reg_info->offset, reg_info->val);
-	}
 
 	/* dump scratch registers */
 	dbg_reg_table->ev_scratch_0 = readl_relaxed(gpii->regs +
 			GPI_GPII_n_CNTXT_SCRATCH_0_OFFS(gpii->gpii_id));
-	GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_ev_scratch Reg addr:0x%x->val:0x%x\n",
-		 GPI_GPII_n_CNTXT_SCRATCH_0_OFFS(gpii->gpii_id),
-		 dbg_reg_table->ev_scratch_0);
-	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
+	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++)
 		dbg_reg_table->ch_scratch_0[chan] = readl_relaxed(gpii->regs +
 				GPI_GPII_n_CH_k_SCRATCH_0_OFFS(gpii->gpii_id,
 						gpii->gpii_chan[chan].chid));
-		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_ch_scratch Reg addr:0x%x->val:0x%x\n",
-			 GPI_GPII_n_CH_k_SCRATCH_0_OFFS(gpii->gpii_id,
-			 gpii->gpii_chan[chan].chid),
-			 dbg_reg_table->ch_scratch_0[chan]);
-	}
 
 	/* Copy the ev ring */
 	if (!dbg_reg_table->ev_ring) {
@@ -876,8 +850,6 @@ static void gpi_dump_debug_reg(struct gpii *gpii)
 
 	dbg_reg_table->error_log = readl_relaxed(gpii->regs +
 				GPI_GPII_n_ERROR_LOG_OFFS(gpii->gpii_id));
-	GPII_ERR(gpii, GPI_DBG_COMMON, "GPI Error log Reg addr:0x%x->val:0x%x\n",
-		 GPI_GPII_n_ERROR_LOG_OFFS(gpii->gpii_id), dbg_reg_table->error_log);
 
 	GPII_ERR(gpii, GPI_DBG_COMMON, "Global IRQ handling Exit\n");
 }
@@ -1123,7 +1095,6 @@ static int gpi_send_cmd(struct gpii *gpii,
 {
 	u32 chid = MAX_CHANNELS_PER_GPII;
 	u32 cmd;
-	u32 offset, irq_stat;
 	unsigned long timeout;
 	void __iomem *cmd_reg;
 
@@ -1149,11 +1120,8 @@ static int gpi_send_cmd(struct gpii *gpii,
 			msecs_to_jiffies(gpi_cmd_info[gpi_cmd].timeout_ms));
 
 	if (!timeout) {
-		offset = GPI_GPII_n_CNTXT_TYPE_IRQ_OFFS(gpii->gpii_id);
-		irq_stat = gpi_read_reg(gpii, gpii->regs + offset);
-		GPII_ERR(gpii, chid,
-			 "cmd: %s completion timeout irq_status=0x%x\n",
-		TO_GPI_CMD_STR(gpi_cmd), irq_stat);
+		GPII_ERR(gpii, chid, "cmd: %s completion timeout\n",
+			 TO_GPI_CMD_STR(gpi_cmd));
 		return -EIO;
 	}
 
@@ -1266,7 +1234,16 @@ static void gpi_process_ch_ctrl_irq(struct gpii *gpii)
 		GPII_VERB(gpii, chid, "setting channel to state:%s\n",
 			  TO_GPI_CH_STATE_STR(gpii_chan->ch_state));
 
-		complete_all(&gpii->cmd_completion);
+		/*
+		 * Triggering complete all if ch_state is not a stop in process.
+		 * Stop in process is a transition state and we will wait for
+		 * stop interrupt before notifying.
+		 */
+		if (gpii_chan->ch_state != CH_STATE_STOP_IN_PROC) {
+			GPII_ERR(gpii, GPI_DBG_COMMON,
+			"Chan Not in Proper state:%d\n", gpii_chan->ch_state);
+			complete_all(&gpii->cmd_completion);
+		}
 
 		/* notifying clients if in error state */
 		if (gpii_chan->ch_state == CH_STATE_ERROR)
@@ -2248,6 +2225,7 @@ int gpi_terminate_all(struct dma_chan *chan)
 {
 	struct gpii_chan *gpii_chan = to_gpii_chan(chan);
 	struct gpii *gpii = gpii_chan->gpii;
+	struct gpi_dev *gpi_dev = gpii->gpi_dev;
 	int schid, echid, i;
 	int ret = 0;
 
@@ -2262,20 +2240,22 @@ int gpi_terminate_all(struct dma_chan *chan)
 	echid = (gpii->protocol == SE_PROTOCOL_UART) ? schid + 1 :
 		MAX_CHANNELS_PER_GPII;
 
-	/* stop the channel */
-	for (i = schid; i < echid; i++) {
-		gpii_chan = &gpii->gpii_chan[i];
+	if (!gpi_dev->is_le_vm) {
+		/* stop the channel */
+		for (i = schid; i < echid; i++) {
+			gpii_chan = &gpii->gpii_chan[i];
 
-		/* disable ch state so no more TRE processing */
-		write_lock_irq(&gpii->pm_lock);
-		gpii_chan->pm_state = PREPARE_TERMINATE;
-		write_unlock_irq(&gpii->pm_lock);
+			/* disable ch state so no more TRE processing */
+			write_lock_irq(&gpii->pm_lock);
+			gpii_chan->pm_state = PREPARE_TERMINATE;
+			write_unlock_irq(&gpii->pm_lock);
 
-		/* send command to Stop the channel */
-		ret = gpi_send_cmd(gpii, gpii_chan, GPI_CH_CMD_STOP);
-		if (ret)
-			GPII_ERR(gpii, gpii_chan->chid,
-				 "Error Stopping Chan:%d resetting\n", ret);
+			/* send command to Stop the channel */
+			ret = gpi_send_cmd(gpii, gpii_chan, GPI_CH_CMD_STOP);
+			if (ret)
+				GPII_ERR(gpii, gpii_chan->chid,
+				"Error Stopping Chan:%d resetting\n", ret);
+		}
 	}
 
 	/* reset the channels (clears any pending tre) */
@@ -2375,16 +2355,9 @@ static int gpi_pause(struct dma_chan *chan)
 	u32 chid, type;
 	int iter = 0;
 	unsigned long total_iter = 1000; //waiting10ms 1000*udelay(10)
-
 	GPII_INFO(gpii, gpii_chan->chid, "Enter\n");
 	mutex_lock(&gpii->ctrl_lock);
 
-	/* if gpi_pause already done we are not doing again*/
-	if (!gpii->is_resumed) {
-		GPII_ERR(gpii, gpii_chan->chid, "Already in suspend/pause state\n");
-		mutex_unlock(&gpii->ctrl_lock);
-		return 0;
-	}
 	/* dump the GPII IRQ register at the time of error */
 	offset1 = GPI_GPII_n_CNTXT_TYPE_IRQ_OFFS(gpii->gpii_id);
 	offset2 = GPI_GPII_n_CNTXT_SRC_IEOB_IRQ_MSK_OFFS(gpii->gpii_id);
@@ -2396,20 +2369,8 @@ static int gpi_pause(struct dma_chan *chan)
 	}
 
 	cntxt_rp = gpi_read_reg(gpii, gpii->ev_ring_rp_lsb_reg);
-	if (!cntxt_rp) {
-		GPII_ERR(gpii, GPI_DBG_COMMON, "invalid cntxt_rp");
-		mutex_unlock(&gpii->ctrl_lock);
-		return -EINVAL;
-	}
-
 	rp = to_virtual(ev_ring, cntxt_rp);
 	local_rp = to_physical(ev_ring, ev_ring->rp);
-	if (!local_rp) {
-		GPII_ERR(gpii, GPI_DBG_COMMON, "invalid local_rp");
-		mutex_unlock(&gpii->ctrl_lock);
-		return -EINVAL;
-	}
-
 	rp1 = ev_ring->rp;
 
 	/* dump the event ring at the time of error */
@@ -2460,6 +2421,8 @@ static int gpi_pause(struct dma_chan *chan)
 		}
 	}
 
+	mutex_unlock(&gpii->ctrl_lock);
+
 	if (gpii->dual_ee_sync_flag) {
 		while (iter < total_iter) {
 			iter++;
@@ -2469,10 +2432,7 @@ static int gpi_pause(struct dma_chan *chan)
 			udelay(10);
 		}
 	}
-	GPII_INFO(gpii, gpii_chan->chid, "iter:%d\n", iter);
-	disable_irq(gpii->irq);
-	gpii->is_resumed = false;
-	mutex_unlock(&gpii->ctrl_lock);
+
 	return 0;
 }
 
@@ -2487,27 +2447,14 @@ static int gpi_resume(struct dma_chan *chan)
 	GPII_INFO(gpii, gpii_chan->chid, "enter\n");
 
 	mutex_lock(&gpii->ctrl_lock);
-	/* if gpi_pause not done we are not doing resume */
-	if (gpii->is_resumed) {
-		GPII_ERR(gpii, gpii_chan->chid, "Already resumed\n");
-		mutex_unlock(&gpii->ctrl_lock);
-		return 0;
-	}
-	enable_irq(gpii->irq);
-
-	/* We are updating is_resumed flag in middle of function, because
-	 * enable_irq should happen only one time otherwise we may get
-	 * unbalanced irq results. Without enable_irq we cannot issue commands
-	 * to the gsi hw.
-	 */
-	gpii->is_resumed = true;
-
 	if (gpii->pm_state == ACTIVE_STATE) {
 		GPII_INFO(gpii, gpii_chan->chid,
 			  "channel is already active\n");
 		mutex_unlock(&gpii->ctrl_lock);
 		return 0;
 	}
+
+	enable_irq(gpii->irq);
 
 	/* send start command to start the channels */
 	for (i = 0; i < MAX_CHANNELS_PER_GPII; i++) {
@@ -3140,13 +3087,17 @@ static int gpi_probe(struct platform_device *pdev)
 	if (!gpi_dev->gpiis)
 		return -ENOMEM;
 
+	gpi_dev->is_le_vm = of_property_read_bool(pdev->dev.of_node,
+			"qcom,le-vm");
+	if (gpi_dev->is_le_vm)
+		GPI_LOG(gpi_dev, "LE-VM usecase\n");
+
 	/* setup all the supported gpii */
 	INIT_LIST_HEAD(&gpi_dev->dma_device.channels);
 	for (i = 0; i < gpi_dev->max_gpii; i++) {
 		struct gpii *gpii = &gpi_dev->gpiis[i];
 		int chan;
 
-		gpii->is_resumed = true;
 		if (!(((1 << i) & gpi_dev->gpii_mask)  ||
 				((1 << i) & gpi_dev->static_gpii_mask)))
 			continue;

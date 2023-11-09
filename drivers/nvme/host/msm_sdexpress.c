@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "msm_sdexpress.h"
@@ -119,19 +119,10 @@ static void msm_sdexpress_deenumerate_card(struct msm_sdexpress_info *info)
 	int rc = 0;
 	struct msm_sdexpress_reg_data *vreg;
 
-	mutex_lock(&info->detect_lock);
-
-	/* Check if card is already deenumerated */
-	if (!info->card_enumerated) {
-		mutex_unlock(&info->detect_lock);
-		return;
-	}
-
 	rc = msm_pcie_deenumerate(info->pci_nvme_instance);
 	if (rc) {
 		pr_err("%s: pcie deenumeration fails err:%d\n",
 				__func__, rc);
-		mutex_unlock(&info->detect_lock);
 		return;
 	}
 
@@ -139,8 +130,6 @@ static void msm_sdexpress_deenumerate_card(struct msm_sdexpress_info *info)
 	rc = msm_sdexpress_vreg_disable(vreg);
 	vreg = info->vreg_data->vdd2_data;
 	rc = msm_sdexpress_vreg_disable(vreg);
-	info->card_enumerated = false;
-	mutex_unlock(&info->detect_lock);
 	pr_debug("sdexpress deenumeration successful\n");
 }
 
@@ -150,13 +139,6 @@ static void msm_sdexpress_enumerate_card(struct msm_sdexpress_info *info)
 	unsigned long timeout;
 	struct msm_sdexpress_reg_data *vreg;
 
-	mutex_lock(&info->detect_lock);
-
-	/* Check if card is already enumerated */
-	if (info->card_enumerated) {
-		mutex_unlock(&info->detect_lock);
-		return;
-	}
 	/*
 	 * Make sure the following are low and high before powering the VDD's.
 	 * During probe, all these lines are in their respective low/high states.
@@ -234,8 +216,6 @@ retry:
 	}
 
 	if (!rc) {
-		info->card_enumerated = true;
-		mutex_unlock(&info->detect_lock);
 		pr_info("%s: Card enumerated successfully\n", __func__);
 		return;
 	}
@@ -247,8 +227,7 @@ disable_vdd1:
 	vreg = info->vreg_data->vdd1_data;
 	msm_sdexpress_vreg_disable(vreg);
 out:
-	mutex_unlock(&info->detect_lock);
-	pr_err("%s: failed to call pcie enumeration. err:%d\n", __func__, rc);
+	pr_err("%s: failed to call pcie enumeration.\n", __func__);
 }
 
 static void msm_sdexpress_detect_change(struct work_struct *work)
@@ -611,11 +590,6 @@ static void msm_sdexpress_gpiod_request_cd_irq(struct msm_sdexpress_info *info)
 	}
 
 	info->cd_irq = irq;
-	/* Enable wake capability for card detect irq */
-	ret = enable_irq_wake(info->cd_irq);
-	if (ret)
-		dev_err(dev, "failed to enable wake capability for cd-gpio(%d)\n",
-			ret);
 }
 
 /*
@@ -648,7 +622,6 @@ static int msm_sdexpress_probe(struct platform_device *pdev)
 	}
 
 	INIT_DELAYED_WORK(&info->sdex_work, msm_sdexpress_detect_change);
-	mutex_init(&info->detect_lock);
 
 	/* Parse platform data */
 	ret = msm_sdexpress_populate_pdata(dev, info);

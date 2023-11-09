@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
 #include <linux/soc/qcom/qmi.h>
+
+#ifdef OPLUS_FEATURE_WIFI_BDF
+//Modify for: multi projects using different bdf
+#include <linux/fs.h>
+#include <asm/uaccess.h>
+#include <soc/oplus/system/oplus_project.h>
+#endif /* OPLUS_FEATURE_WIFI_BDF */
 
 #include "bus.h"
 #include "debug.h"
@@ -27,6 +34,25 @@
 #define REGDB_FILE_NAME			"regdb.bin"
 #define HDS_FILE_NAME			"hds.bin"
 #define CHIP_ID_GF_MASK			0x10
+
+#ifdef OPLUS_FEATURE_WIFI_BDF
+//Modify for: multi projects using different bdf
+#define BDF_FILE_CHN_IN		"bdwlan.b0c"
+#define BDF_FILE_EU		"bdwlan.b0e"
+#define BDF_FILE_NA		"bdwlan.b0a"
+#define BDF_FILE_CHN_IN_GF	"bdwlang.b0c"
+#define BDF_FILE_EU_GF		"bdwlang.b0e"
+#define BDF_FILE_NA_GF		"bdwlang.b0a"
+#define REG_ID_CHN_IN		1
+#define REG_ID_EU		2
+#define REG_ID_NA		3
+//add for second resources
+#define RESCOUSE_FIRST   1
+#define RESCOUSE_SECOND  2
+#define RESCOUSE_THIRD   3
+#define ELF_BDF_FILE_NAME_SEC         "bdwlansec.elf"
+#define ELF_BDF_FILE_NAME_GF_SEC      "bdwlangsec.elf"
+#endif /* OPLUS_FEATURE_WIFI_BDF */
 
 #define CONN_ROAM_FILE_NAME		"wlan-connection-roaming"
 #define INI_EXT			".ini"
@@ -64,8 +90,17 @@ void cnss_ignore_qmi_failure(bool ignore)
 	ignore_qmi_failure = ignore;
 }
 #else
+#ifdef OPLUS_FEATURE_WIFI_BDF
+static bool ignore_qmi_failure;
+#define CNSS_QMI_ASSERT() CNSS_ASSERT(ignore_qmi_failure)
+void cnss_ignore_qmi_failure(bool ignore)
+{
+	ignore_qmi_failure = ignore;
+}
+#else
 #define CNSS_QMI_ASSERT() do { } while (0)
 void cnss_ignore_qmi_failure(bool ignore) { }
+#endif /* OPLUS_FEATURE_WIFI_BDF */
 #endif
 
 static char *cnss_qmi_mode_to_str(enum cnss_driver_mode mode)
@@ -217,6 +252,19 @@ static void cnss_wlfw_host_cap_parse_mlo(struct cnss_plat_data *plat_priv,
 	}
 }
 
+#ifdef OPLUS_FEATURE_WIFI_WSA
+//Modify for wsa function in SMT mode
+static bool needSupportWsa() {
+	int project_id = get_project();
+	cnss_pr_dbg("project: %d\n", project_id);
+	if (project_id == 20846 || project_id == 20847 || project_id == 133194
+            || project_id == 21841 || project_id == 21842) {
+		return true;
+	}
+	return false;
+}
+#endif /* OPLUS_FEATURE_WIFI_WSA */
+
 static int cnss_wlfw_host_cap_send_sync(struct cnss_plat_data *plat_priv)
 {
 	struct wlfw_host_cap_req_msg_v01 *req;
@@ -252,6 +300,32 @@ static int cnss_wlfw_host_cap_send_sync(struct cnss_plat_data *plat_priv)
 
 	req->bdf_support_valid = 1;
 	req->bdf_support = 1;
+
+#ifdef OPLUS_FEATURE_WIFI_WSA
+//Modify for wsa function in SMT mode
+	if (needSupportWsa()) {
+		req->gpios_valid = 1;
+		/* Format of GPIO configuration -
+		*
+		* A_UINT32    default_output_val:1,   GPIO default Output value if direction is output
+		*             reserved1:7,   reserved bits
+		*             sw_func:4,     GPIO pin software function selection
+		*             pull:2,        GPIO Pull, TLMM_GPIO_CFGn.GPIO_PULL
+		*             func:4,        GPIO pin function, TLMM_GPIO_CFGn.FUNC_SEL
+		*             drive:3,       GPIO Drive, TLMM_GPIO_CFGn.DRV_STRENGTH
+		*             dir:1,         GPIO pin direction: PLAT_GPIO_DIR_INPUT/PLAT_GPIO_DIR_OUTPUT, TLMM_GPIO_CFGn.GPIO_OE
+		*             reserved0:2,   reserved bits
+		*             gpio_num:8;    GPIO pin number
+		*/
+		/* 1st GPIO */
+		req->gpios[0] = 0x38242F00;  // set GPIO 56 as output low by default
+
+		/* The Nth GPIO if any, and update req->gpios_len accordingly
+		* Ensure gpios_len less than QMI_WLFW_MAX_NUM_GPIO_V01
+		*/
+		req->gpios_len = 1;
+	}
+#endif /* OPLUS_FEATURE_WIFI_WSA */
 
 	req->m3_support_valid = 1;
 	req->m3_support = 1;
@@ -349,12 +423,6 @@ int cnss_wlfw_respond_mem_send_sync(struct cnss_plat_data *plat_priv)
 	if (!resp) {
 		kfree(req);
 		return -ENOMEM;
-	}
-
-	if (plat_priv->fw_mem_seg_len > QMI_WLFW_MAX_NUM_MEM_SEG_V01) {
-		cnss_pr_err("Invalid seg len %u\n", plat_priv->fw_mem_seg_len);
-		ret = -EINVAL;
-		goto out;
 	}
 
 	req->mem_seg_len = plat_priv->fw_mem_seg_len;
@@ -551,22 +619,6 @@ int cnss_wlfw_tgt_cap_send_sync(struct cnss_plat_data *plat_priv)
 	if (resp->ol_cpr_cfg_valid)
 		cnss_aop_ol_cpr_cfg_setup(plat_priv, &resp->ol_cpr_cfg);
 
-	/* Disable WLAN PDC in AOP firmware for boards which support on chip PMIC
-	 * so AOP will ignore SW_CTRL changes and do not update regulator votes.
-	 **/
-	for (i = 0; i < plat_priv->on_chip_pmic_devices_count; i++) {
-		if (plat_priv->board_info.board_id ==
-		    plat_priv->on_chip_pmic_board_ids[i]) {
-			cnss_pr_dbg("Disabling WLAN PDC for board_id: %02x\n",
-				    plat_priv->board_info.board_id);
-			ret = cnss_aop_send_msg(plat_priv,
-						"{class: wlan_pdc, ss: rf, res: pdc, enable: 0}");
-			if (ret < 0)
-				cnss_pr_dbg("Failed to Send AOP Msg");
-			break;
-		}
-	}
-
 	cnss_pr_dbg("Target capability: chip_id: 0x%x, chip_family: 0x%x, board_id: 0x%x, soc_id: 0x%x, otp_version: 0x%x\n",
 		    plat_priv->chip_info.chip_id,
 		    plat_priv->chip_info.chip_family,
@@ -592,21 +644,79 @@ out:
 	return ret;
 }
 
-static char *cnss_bdf_type_to_str(enum cnss_bdf_type bdf_type)
-{
-	switch (bdf_type) {
-	case CNSS_BDF_BIN:
-	case CNSS_BDF_ELF:
-		return "BDF";
-	case CNSS_BDF_REGDB:
-		return "REGDB";
-	case CNSS_BDF_HDS:
-		return "HDS";
-	default:
-		return "UNKNOWN";
-	}
+#ifdef OPLUS_FEATURE_WIFI_BDF
+//Modify for: multi projects using different bdf
+static bool is_prj_support_region_id() {
+        int project_id = get_project();
+        cnss_pr_dbg("project: %d\n", project_id);
+        if (project_id == 20846 || project_id == 20847 || project_id == 133194
+            || project_id == 21841 || project_id == 21842) {
+                return true;
+        }
+        return false;
 }
 
+static bool is_udon_internal_prj_need_second_rescouse() {
+        int project_id = get_project();
+        cnss_pr_dbg("project: %d\n", project_id);
+        if (project_id == 22803) {
+                return true;
+        }
+        return false;
+}
+
+static bool is_udon_export_prj_need_second_rescouse() {
+        int project_id = get_project();
+        cnss_pr_dbg("project: %d\n", project_id);
+        if (project_id == 22881) {
+                return true;
+        }
+        return false;
+}
+
+static void cnss_get_oplus_bdf_file_name(struct cnss_plat_data *plat_priv, char* file_name, u32 filename_len) {
+	int reg_id = get_Operator_Version();
+	cnss_pr_dbg("region id: %d", reg_id);
+
+	if (plat_priv->chip_info.chip_id & CHIP_ID_GF_MASK) {
+		if (is_prj_support_region_id()) {
+			if (reg_id == REG_ID_CHN_IN) {
+				snprintf(file_name, filename_len, BDF_FILE_CHN_IN_GF);
+			} else if (reg_id == REG_ID_EU) {
+				snprintf(file_name, filename_len, BDF_FILE_EU_GF);
+			} else if (reg_id == REG_ID_NA) {
+				snprintf(file_name, filename_len, BDF_FILE_NA_GF);
+			} else {
+				snprintf(file_name, filename_len, ELF_BDF_FILE_NAME_GF);
+			}
+		} else if ((is_udon_internal_prj_need_second_rescouse() && RESCOUSE_SECOND == get_Modem_Version())
+			        || (is_udon_export_prj_need_second_rescouse() && RESCOUSE_THIRD == get_Modem_Version())) {
+			cnss_pr_dbg("RF id: %d", get_Modem_Version());
+			snprintf(file_name, filename_len, ELF_BDF_FILE_NAME_GF_SEC);
+		} else {
+			snprintf(file_name, filename_len, ELF_BDF_FILE_NAME_GF);
+		}
+	} else {
+		if (is_prj_support_region_id()) {
+			if (reg_id == REG_ID_CHN_IN) {
+				snprintf(file_name, filename_len, BDF_FILE_CHN_IN);
+			} else if (reg_id == REG_ID_EU) {
+				snprintf(file_name, filename_len, BDF_FILE_EU);
+			} else if (reg_id == REG_ID_NA) {
+				snprintf(file_name, filename_len, BDF_FILE_NA);
+			} else {
+				snprintf(file_name, filename_len, ELF_BDF_FILE_NAME);
+			}
+		} else if ((is_udon_internal_prj_need_second_rescouse() && RESCOUSE_SECOND == get_Modem_Version())
+			        || (is_udon_export_prj_need_second_rescouse() && RESCOUSE_THIRD == get_Modem_Version())) {
+			cnss_pr_dbg("RF id: %d", get_Modem_Version());
+			snprintf(file_name, filename_len, ELF_BDF_FILE_NAME_SEC);
+		} else {
+			snprintf(file_name, filename_len, ELF_BDF_FILE_NAME);
+		}
+	}
+}
+#endif /* OPLUS_FEATURE_WIFI_BDF */
 static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 				  u32 bdf_type, char *filename,
 				  u32 filename_len)
@@ -618,12 +728,17 @@ static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 	case CNSS_BDF_ELF:
 		/* Board ID will be equal or less than 0xFF in GF mask case */
 		if (plat_priv->board_info.board_id == 0xFF) {
+#ifndef OPLUS_FEATURE_WIFI_BDF
+//Modify for: multi projects using different bdf
 			if (plat_priv->chip_info.chip_id & CHIP_ID_GF_MASK)
 				snprintf(filename_tmp, filename_len,
 					 ELF_BDF_FILE_NAME_GF);
 			else
 				snprintf(filename_tmp, filename_len,
 					 ELF_BDF_FILE_NAME);
+#else
+			cnss_get_oplus_bdf_file_name(plat_priv, filename_tmp, filename_len);
+#endif /* OPLUS_FEATURE_WIFI_BDF */
 		} else if (plat_priv->board_info.board_id < 0xFF) {
 			if (plat_priv->chip_info.chip_id & CHIP_ID_GF_MASK)
 				snprintf(filename_tmp, filename_len,
@@ -835,8 +950,8 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 	unsigned int remaining;
 	int ret = 0;
 
-	cnss_pr_dbg("Sending QMI_WLFW_BDF_DOWNLOAD_REQ_V01 message for bdf_type: %d (%s), state: 0x%lx\n",
-		    bdf_type, cnss_bdf_type_to_str(bdf_type), plat_priv->driver_state);
+	cnss_pr_dbg("Sending BDF download message, state: 0x%lx, type: %d\n",
+		    plat_priv->driver_state, bdf_type);
 
 	req = kzalloc(sizeof(*req), GFP_KERNEL);
 	if (!req)
@@ -861,16 +976,23 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 					      &plat_priv->plat_dev->dev);
 
 	if (ret) {
-		cnss_pr_err("Failed to load %s: %s, ret: %d\n",
-			    cnss_bdf_type_to_str(bdf_type), filename, ret);
+		cnss_pr_err("Failed to load BDF: %s, ret: %d\n", filename, ret);
 		goto err_req_fw;
 	}
 
 	temp = fw_entry->data;
 	remaining = fw_entry->size;
 
-	cnss_pr_dbg("Downloading %s: %s, size: %u\n",
-		    cnss_bdf_type_to_str(bdf_type), filename, remaining);
+	#ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+	//Add for wifi switch monitor
+	if (bdf_type == CNSS_BDF_REGDB) {
+		set_bit(CNSS_LOAD_REGDB_SUCCESS, &plat_priv->loadRegdbState);
+	} else if (bdf_type == CNSS_BDF_ELF){
+		set_bit(CNSS_LOAD_BDF_SUCCESS, &plat_priv->loadBdfState);
+	}
+	#endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
+
+	cnss_pr_dbg("Downloading BDF: %s, size: %u\n", filename, remaining);
 
 	while (remaining) {
 		req->valid = 1;
@@ -896,8 +1018,8 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 		ret = qmi_txn_init(&plat_priv->qmi_wlfw, &txn,
 				   wlfw_bdf_download_resp_msg_v01_ei, resp);
 		if (ret < 0) {
-			cnss_pr_err("Failed to initialize txn for QMI_WLFW_BDF_DOWNLOAD_REQ_V01 request for %s, error: %d\n",
-				    cnss_bdf_type_to_str(bdf_type), ret);
+			cnss_pr_err("Failed to initialize txn for BDF download request, err: %d\n",
+				    ret);
 			goto err_send;
 		}
 
@@ -908,22 +1030,21 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 			 wlfw_bdf_download_req_msg_v01_ei, req);
 		if (ret < 0) {
 			qmi_txn_cancel(&txn);
-			cnss_pr_err("Failed to send QMI_WLFW_BDF_DOWNLOAD_REQ_V01 request for %s, error: %d\n",
-				    cnss_bdf_type_to_str(bdf_type), ret);
+			cnss_pr_err("Failed to send respond BDF download request, err: %d\n",
+				    ret);
 			goto err_send;
 		}
 
 		ret = qmi_txn_wait(&txn, QMI_WLFW_TIMEOUT_JF);
 		if (ret < 0) {
-			cnss_pr_err("Timeout while waiting for FW response for QMI_WLFW_BDF_DOWNLOAD_REQ_V01 request for %s, err: %d\n",
-				    cnss_bdf_type_to_str(bdf_type), ret);
+			cnss_pr_err("Failed to wait for response of BDF download request, err: %d\n",
+				    ret);
 			goto err_send;
 		}
 
 		if (resp->resp.result != QMI_RESULT_SUCCESS_V01) {
-			cnss_pr_err("FW response for QMI_WLFW_BDF_DOWNLOAD_REQ_V01 request for %s failed, result: %d, err: %d\n",
-				    cnss_bdf_type_to_str(bdf_type), resp->resp.result,
-				    resp->resp.error);
+			cnss_pr_err("BDF download request failed, result: %d, err: %d\n",
+				    resp->resp.result, resp->resp.error);
 			ret = -resp->resp.result;
 			goto err_send;
 		}
@@ -953,6 +1074,14 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 err_send:
 	release_firmware(fw_entry);
 err_req_fw:
+	#ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+	//Add for wifi switch monitor
+	if (bdf_type == CNSS_BDF_REGDB) {
+		set_bit(CNSS_LOAD_REGDB_FAIL, &plat_priv->loadRegdbState);
+	} else if (bdf_type == CNSS_BDF_ELF){
+		set_bit(CNSS_LOAD_BDF_FAIL, &plat_priv->loadBdfState);
+	}
+	#endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
 	if (!(bdf_type == CNSS_BDF_REGDB ||
 	      test_bit(CNSS_IN_REBOOT, &plat_priv->driver_state) ||
 	      ret == -EAGAIN))
@@ -1047,6 +1176,11 @@ int cnss_wlfw_wlan_mac_req_send_sync(struct cnss_plat_data *plat_priv,
 	struct qmi_txn txn;
 	int ret;
 
+#ifdef OPLUS_FEATURE_WIFI_MAC
+        int i;
+        char revert_mac[QMI_WLFW_MAC_ADDR_SIZE_V01];
+#endif /* OPLUS_FEATURE_WIFI_MAC */
+
 	if (!plat_priv || !mac || mac_len != QMI_WLFW_MAC_ADDR_SIZE_V01)
 		return -EINVAL;
 
@@ -1061,7 +1195,16 @@ int cnss_wlfw_wlan_mac_req_send_sync(struct cnss_plat_data *plat_priv,
 
 		cnss_pr_dbg("Sending WLAN mac req [%pM], state: 0x%lx\n",
 			    mac, plat_priv->driver_state);
-	memcpy(req.mac_addr, mac, mac_len);
+#ifdef OPLUS_FEATURE_WIFI_MAC
+        for (i = 0; i < QMI_WLFW_MAC_ADDR_SIZE_V01 ; i ++){
+                revert_mac[i] = mac[QMI_WLFW_MAC_ADDR_SIZE_V01 - i -1];
+        }
+                cnss_pr_dbg("Sending revert WLAN mac req [%pM], state: 0x%lx\n",
+                            revert_mac, plat_priv->driver_state);
+        memcpy(req.mac_addr, revert_mac, mac_len);
+#else
+        memcpy(req.mac_addr, mac, mac_len);
+#endif /* OPLUS_FEATURE_WIFI_MAC */
 	req.mac_addr_valid = 1;
 
 	ret = qmi_send_request(&plat_priv->qmi_wlfw, NULL, &txn,
@@ -1167,8 +1310,7 @@ int cnss_wlfw_qdss_data_send_sync(struct cnss_plat_data *plat_priv, char *file_n
 		     resp->total_size == total_size) &&
 		   (resp->seg_id_valid == 1 && resp->seg_id == req->seg_id) &&
 		   (resp->data_valid == 1 &&
-		    resp->data_len <= QMI_WLFW_MAX_DATA_SIZE_V01) &&
-		   resp->data_len <= remaining) {
+		    resp->data_len <= QMI_WLFW_MAX_DATA_SIZE_V01)) {
 			memcpy(p_qdss_trace_data_temp,
 			       resp->data, resp->data_len);
 		} else {
@@ -2107,12 +2249,6 @@ int cnss_wlfw_qdss_trace_mem_info_send_sync(struct cnss_plat_data *plat_priv)
 		return -ENOMEM;
 	}
 
-	if (plat_priv->qdss_mem_seg_len > QMI_WLFW_MAX_NUM_MEM_SEG_V01) {
-		cnss_pr_err("Invalid seg len %u\n", plat_priv->qdss_mem_seg_len);
-		ret = -EINVAL;
-		goto out;
-	}
-
 	req->mem_seg_len = plat_priv->qdss_mem_seg_len;
 	for (i = 0; i < req->mem_seg_len; i++) {
 		cnss_pr_dbg("Memory for FW, va: 0x%pK, pa: %pa, size: 0x%zx, type: %u\n",
@@ -2161,74 +2297,6 @@ int cnss_wlfw_qdss_trace_mem_info_send_sync(struct cnss_plat_data *plat_priv)
 	kfree(resp);
 	return 0;
 
-out:
-	kfree(req);
-	kfree(resp);
-	return ret;
-}
-
-int cnss_wlfw_send_host_wfc_call_status(struct cnss_plat_data *plat_priv,
-					struct cnss_wfc_cfg cfg)
-{
-	struct wlfw_wfc_call_status_req_msg_v01 *req;
-	struct wlfw_wfc_call_status_resp_msg_v01 *resp;
-	struct qmi_txn txn;
-	int ret = 0;
-
-	if (!test_bit(CNSS_FW_READY, &plat_priv->driver_state)) {
-		cnss_pr_err("Drop host WFC indication as FW not initialized\n");
-		return -EINVAL;
-	}
-	req = kzalloc(sizeof(*req), GFP_KERNEL);
-	if (!req)
-		return -ENOMEM;
-
-	resp = kzalloc(sizeof(*resp), GFP_KERNEL);
-	if (!resp) {
-		kfree(req);
-		return -ENOMEM;
-	}
-
-	req->wfc_call_active_valid = 1;
-	req->wfc_call_active = cfg.mode;
-
-	cnss_pr_dbg("CNSS->FW: WFC_CALL_REQ: state: 0x%lx\n",
-		    plat_priv->driver_state);
-
-	ret = qmi_txn_init(&plat_priv->qmi_wlfw, &txn,
-			   wlfw_wfc_call_status_resp_msg_v01_ei, resp);
-	if (ret < 0) {
-		cnss_pr_err("CNSS->FW: WFC_CALL_REQ: QMI Txn Init: Err %d\n",
-			    ret);
-		goto out;
-	}
-
-	cnss_pr_dbg("Send WFC Mode: %d\n", cfg.mode);
-	ret = qmi_send_request(&plat_priv->qmi_wlfw, NULL, &txn,
-			       QMI_WLFW_WFC_CALL_STATUS_REQ_V01,
-			       WLFW_WFC_CALL_STATUS_REQ_MSG_V01_MAX_MSG_LEN,
-			       wlfw_wfc_call_status_req_msg_v01_ei, req);
-	if (ret < 0) {
-		qmi_txn_cancel(&txn);
-		cnss_pr_err("CNSS->FW: WFC_CALL_REQ: QMI Send Err: %d\n",
-			    ret);
-		goto out;
-	}
-
-	ret = qmi_txn_wait(&txn, QMI_WLFW_TIMEOUT_JF);
-	if (ret < 0) {
-		cnss_pr_err("FW->CNSS: WFC_CALL_RSP: QMI Wait Err: %d\n",
-			    ret);
-		goto out;
-	}
-
-	if (resp->resp.result != QMI_RESULT_SUCCESS_V01) {
-		cnss_pr_err("FW->CNSS: WFC_CALL_RSP: Result: %d Err: %d\n",
-			    resp->resp.result, resp->resp.error);
-		ret = -EINVAL;
-		goto out;
-	}
-	ret = 0;
 out:
 	kfree(req);
 	kfree(resp);
@@ -2481,11 +2549,6 @@ static void cnss_wlfw_request_mem_ind_cb(struct qmi_handle *qmi_wlfw,
 		return;
 	}
 
-	if (ind_msg->mem_seg_len > QMI_WLFW_MAX_NUM_MEM_SEG_V01) {
-		cnss_pr_err("Invalid seg len %u\n", ind_msg->mem_seg_len);
-		return;
-	}
-
 	plat_priv->fw_mem_seg_len = ind_msg->mem_seg_len;
 	for (i = 0; i < plat_priv->fw_mem_seg_len; i++) {
 		cnss_pr_dbg("FW requests for memory, size: 0x%x, type: %u\n",
@@ -2700,11 +2763,6 @@ static void cnss_wlfw_qdss_trace_req_mem_ind_cb(struct qmi_handle *qmi_wlfw,
 		return;
 	}
 
-	if (ind_msg->mem_seg_len > QMI_WLFW_MAX_NUM_MEM_SEG_V01) {
-		cnss_pr_err("Invalid seg len %u\n", ind_msg->mem_seg_len);
-		return;
-	}
-
 	plat_priv->qdss_mem_seg_len = ind_msg->mem_seg_len;
 	for (i = 0; i < plat_priv->qdss_mem_seg_len; i++) {
 		cnss_pr_dbg("QDSS requests for memory, size: 0x%x, type: %u\n",
@@ -2821,17 +2879,20 @@ static void cnss_wlfw_respond_get_info_ind_cb(struct qmi_handle *qmi_wlfw,
 	struct cnss_plat_data *plat_priv =
 		container_of(qmi_wlfw, struct cnss_plat_data, qmi_wlfw);
 	const struct wlfw_respond_get_info_ind_msg_v01 *ind_msg = data;
-
+        #ifndef OPLUS_BUG_STABILITY
 	cnss_pr_buf("Received QMI WLFW respond get info indication\n");
+        #endif /*OPLUS_BUG_STABILITY*/
 
 	if (!txn) {
 		cnss_pr_err("Spurious indication\n");
 		return;
 	}
 
+        #ifndef OPLUS_BUG_STABILITY
 	cnss_pr_buf("Extract message with event length: %d, type: %d, is last: %d, seq no: %d\n",
 		    ind_msg->data_len, ind_msg->type,
 		    ind_msg->is_last, ind_msg->seq_no);
+        #endif /*OPLUS_BUG_STABILITY*/
 
 	if (plat_priv->get_info_cb_ctx && plat_priv->get_info_cb)
 		plat_priv->get_info_cb(plat_priv->get_info_cb_ctx,
