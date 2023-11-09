@@ -221,7 +221,6 @@ struct charger_custom_data {
 	int min_charger_voltage_1;
 	int min_charger_voltage_2;
 	int max_dmivr_charger_current;
-
 };
 
 struct charger_data {
@@ -440,6 +439,7 @@ struct mtk_charger {
 	struct iio_channel      *usbcon_temp_chan;
 	struct iio_channel      *batcon_temp_chan;
 	struct iio_channel      *sub_batcon_temp_chan;
+	struct iio_channel      *subboard_temp_chan;
 
 	struct ntc_temp * batt_ntc_param;
 	struct ntc_temp * sub_batt_ntc_param;
@@ -479,6 +479,7 @@ struct mtk_charger {
 	int chargeric_temp_volt;
 	int chargeric_temp;
 	bool support_ntc_01c_precision;
+	bool ntc_temp_volt_1840mv;
 
 	struct tcpc_device *tcpc;
 	struct adapter_power_cap srccap;

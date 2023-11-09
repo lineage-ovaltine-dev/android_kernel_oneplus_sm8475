@@ -959,8 +959,41 @@
                 },
                 "overwrite": false
             }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_BUCK_GET_TYPEC_STATE",
+            "desc": {
+                "zh": "获取typec_state"
+            },
+            "auto_debug_code": false,
+            "parameter_list": ["int *"],
+            "parameter_desc": [
+                {
+                    "range": "0-8",
+                    "type": "out",
+                    "desc": {
+                        "zh": "0:UNATTACHED, 1:SNK, 2:SRC, 3:AUDIO, 4:ACA, 5:DEBUG, 6:DBGACC_SNK, 7:CUSTOM_SRC, 8:NORP_SRC",
+                        "en": "0:UNATTACHED, 1:SNK, 2:SRC, 3:AUDIO, 4:ACA, 5:DEBUG, 6:DBGACC_SNK, 7:CUSTOM_SRC, 8:NORP_SRC"
+                    }
+                }
+            ],
+            "vict": {
+                "read": {
+                    "cmd": "vict -f {id} -G vic-*",
+                    "desc": {
+                        "zh": "N/A"
+                    }
+                },
+                "write": false,
+                "overwrite": {
+                    "cmd": "vict -f {id} -O {val} vic-*",
+                    "desc": {
+                        "zh": "N/A"
+                    }
+                }
+            }
         }
     ],
 
-    "version": "V1.0:32:c262e4cc0263d456bb1a3d2aa572e842c4390a39e33e396e2b41156ef70df2e1"
+    "version": "V1.1:33:779b44a57cc317079c153e5c79c9320e044ab6fe52f1140fec87e85b9729c80e"
 }

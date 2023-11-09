@@ -29,6 +29,7 @@
 #include "oplus_chg_comm.h"
 #include "oplus_chg_core.h"
 #include "oplus_chg_module.h"
+#include "oplus_pps.h"
 #include "oplus_adapter.h"
 #include "voocphy/oplus_voocphy.h"
 #include "charger_ic/oplus_switching.h"
@@ -36,11 +37,6 @@
 
 #undef pr_fmt
 #define pr_fmt(fmt) "OPLUS_CHG[TRACK]: %s[%d]: " fmt, __func__, __LINE__
-
-#ifdef pr_info
-#undef pr_info
-#define pr_info pr_debug
-#endif
 
 #define OPLUS_CHG_TRACK_WAIT_TIME_MS		3000
 #define OPLUS_CHG_UPDATE_INFO_DELAY_MS		500
@@ -108,6 +104,7 @@
 #define TRACK_TIME_1000MS_JIFF_THD		(1 * 1000)
 #define TRACK_TIME_5MIN_JIFF_THD		(5 * 60 * 1000)
 #define TRACK_TIME_10MIN_JIFF_THD		(10 * 60 * 1000)
+#define TRACK_TIME_SCHEDULE_UI_SOC_LOAD_JUMP	90000
 #define TRACK_THRAD_PERIOD_TIME_S		5
 #define TRACK_NO_CHRGING_TIME_PCT		70
 #define TRACK_COOLDOWN_CHRGING_TIME_PCT		70
@@ -357,6 +354,11 @@ struct oplus_chg_track_cooldown_err_reason {
 	char err_name[OPLUS_CHG_TRACK_SOFT_ERR_NAME_LEN];
 };
 
+struct oplus_chg_track_pen_match_err_reason {
+	int err_type;
+	char err_name[OPLUS_CHG_TRACK_SOFT_ERR_NAME_LEN];
+};
+
 struct oplus_chg_track_speed_ref {
 	int ref_soc;
 	int ref_power;
@@ -430,6 +432,8 @@ struct oplus_chg_track_status {
 	int pre_uisoc;
 	int pre_vbatt;
 	int pre_time_utc;
+	int pre_rm;
+	int pre_fcc;
 	bool soc_jumped;
 	bool uisoc_jumped;
 	bool uisoc_to_soc_jumped;
@@ -559,6 +563,7 @@ struct oplus_chg_track_status {
 	int hyper_ave_speed;
 
 	struct oplus_chg_track_hidl_wls_third_err wls_third_err;
+	int once_chg_cycle_status;
 };
 
 struct oplus_chg_track {
@@ -704,7 +709,8 @@ static struct flag_reason_table track_flag_reason_table[] = {
 	{ TRACK_NOTIFY_FLAG_UFCS_ABNORMAL, "UfcsAbnormal" },
 	{ TRACK_NOTIFY_FLAG_COOLDOWN_ABNORMAL, "CoolDownAbnormal" },
 	{ TRACK_NOTIFY_FLAG_SMART_CHG_ABNORMAL, "SmartChgAbnormal" },
-	{ TRACK_NOTIFY_FLAG_WLS_THIRD_ENCRY_ABNORMAL, "WlsThirdEncryAbnormal" }
+	{ TRACK_NOTIFY_FLAG_WLS_THIRD_ENCRY_ABNORMAL, "WlsThirdEncryAbnormal" },
+	{ TRACK_NOTIFY_FLAG_PEN_MATCH_STATE_ABNORMAL, "PenMatchStateAbnormal" },
 };
 #endif
 
@@ -880,6 +886,7 @@ static struct oplus_chg_track_wls_trx_err_reason wls_trx_err_reason_table[] = {
 	{ TRACK_WLS_UPDATE_ERR_I2C, "i2c_err" },
 	{ TRACK_WLS_UPDATE_ERR_CRC, "crc_err" },
 	{ TRACK_WLS_UPDATE_ERR_OTHER, "other" },
+	{ TRACK_WLS_TRX_VOUT_ABNORMAL, "vout_abnormal" },
 };
 
 static struct oplus_chg_track_gpio_err_reason gpio_err_reason_table[] = {
@@ -901,6 +908,21 @@ static struct oplus_chg_track_cp_err_reason cp_err_reason_table[] = {
 	{ TRACK_CP_ERR_IBUS_OCP, "ibus_ocp" },
 };
 
+static struct oplus_chg_track_cp_err_reason bidirect_cp_err_reason_table[] = {
+	{ TRACK_BIDIRECT_CP_ERR_SC_EN_STAT, "SC_EN_STAT" },
+	{ TRACK_BIDIRECT_CP_ERR_V2X_OVP, "V2X_OVP" },
+	{ TRACK_BIDIRECT_CP_ERR_V1X_OVP, "V1X_OVP" },
+	{ TRACK_BIDIRECT_CP_ERR_VAC_OVP, "VAC_OVP" },
+	{ TRACK_BIDIRECT_CP_ERR_FWD_OCP, "FWD_OCP" },
+	{ TRACK_BIDIRECT_CP_ERR_RVS_OCP, "RVS_OCP" },
+	{ TRACK_BIDIRECT_CP_ERR_TSHUT, "TSHUT" },
+	{ TRACK_BIDIRECT_CP_ERR_VAC2V2X_OVP, "VAC2V2X_OVP" },
+	{ TRACK_BIDIRECT_CP_ERR_VAC2V2X_UVP, "VAC2V2X_UVP" },
+	{ TRACK_BIDIRECT_CP_ERR_V1X_ISS_OPP, "V1X_ISS_OPP" },
+	{ TRACK_BIDIRECT_CP_ERR_WD_TIMEOUT, "WD_TIMEOUT" },
+	{ TRACK_BIDIRECT_CP_ERR_LNC_SS_TIMEOUT, "LNC_SS_TIMEOUT" },
+};
+
 static struct oplus_chg_track_gague_err_reason gague_err_reason_table[] = {
 	{ TRACK_GAGUE_ERR_SEAL, "seal_fail" },
 	{ TRACK_GAGUE_ERR_UNSEAL, "unseal_fail" },
@@ -909,6 +931,12 @@ static struct oplus_chg_track_gague_err_reason gague_err_reason_table[] = {
 static struct oplus_chg_track_cooldown_err_reason cooldown_err_reason_table[] = {
 	{ TRACK_COOLDOWN_NOT_MATCH, "current_not_match" },
 	{ TRACK_COOLDOWN_INVALID, "value_invalid" },
+};
+
+static struct oplus_chg_track_pen_match_err_reason pen_match_err_reason_table[] = {
+	{ TRACK_PEN_MATCH_TIMEOUT, "pen_match_timeout"},
+	{ TRACK_PEN_MATCH_VERIFY_FAILED, "pen_match_verify_faild"},
+	{ TRACK_PEN_MATCH_TIMEOUT_AND_VERIFY_FAILED, "pen_match_timeout_verify_faild"},
 };
 
 static struct oplus_chg_track_type_mapping type_mapping_table[] = {
@@ -1166,7 +1194,7 @@ static int oplus_chg_track_set_hidl_bcc_err(struct oplus_chg_track_hidl_cmd *cmd
 	bcc_err = &(track_chip->track_status.bcc_err);
 	mutex_lock(&bcc_err->track_bcc_err_lock);
 	if (bcc_err->bcc_err_uploading) {
-		pr_info("bcc_err_uploading, should return\n");
+		pr_debug("bcc_err_uploading, should return\n");
 		mutex_unlock(&bcc_err->track_bcc_err_lock);
 		return 0;
 	}
@@ -1195,7 +1223,7 @@ static int oplus_chg_track_set_hidl_uisoh_info(
 	uisoh_info_p = &(track_chip->track_status.uisoh_info_s);
 	mutex_lock(&uisoh_info_p->track_uisoh_info_lock);
 	if (uisoh_info_p->uisoh_info_uploading) {
-		pr_info("uisoh_info_uploading, should return\n");
+		pr_debug("uisoh_info_uploading, should return\n");
 		mutex_unlock(&uisoh_info_p->track_uisoh_info_lock);
 		return 0;
 	}
@@ -1230,13 +1258,13 @@ static void oplus_track_upload_bcc_err_info(struct work_struct *work)
 
 	mutex_lock(&bcc_err->track_bcc_err_lock);
 	if (bcc_err->bcc_err_uploading) {
-		pr_info("bcc_err_uploading, should return\n");
+		pr_debug("bcc_err_uploading, should return\n");
 		mutex_unlock(&bcc_err->track_bcc_err_lock);
 		return;
 	}
 
 	if (!strlen(bcc_err->bcc_err.err_reason)) {
-		pr_info("bcc_err len is invalid\n");
+		pr_debug("bcc_err len is invalid\n");
 		mutex_unlock(&bcc_err->track_bcc_err_lock);
 		return;
 	}
@@ -1275,7 +1303,7 @@ static void oplus_track_upload_bcc_err_info(struct work_struct *work)
 	}
 	memset(&bcc_err->bcc_err, 0, sizeof(bcc_err->bcc_err));
 	bcc_err->bcc_err_uploading = false;
-	pr_info("success\n");
+	pr_debug("success\n");
 }
 
 static void oplus_track_upload_uisoh_info(struct work_struct *work)
@@ -1300,7 +1328,7 @@ static void oplus_track_upload_uisoh_info(struct work_struct *work)
 
 	mutex_lock(&uisoh_info_p->track_uisoh_info_lock);
 	if (uisoh_info_p->uisoh_info_uploading) {
-		pr_info("uisoh_info_uploading, should return\n");
+		pr_debug("uisoh_info_uploading, should return\n");
 		mutex_unlock(&uisoh_info_p->track_uisoh_info_lock);
 		return;
 	}
@@ -1338,7 +1366,7 @@ static void oplus_track_upload_uisoh_info(struct work_struct *work)
 	}
 	memset(&uisoh_info_p->uisoh_info, 0, sizeof(uisoh_info_p->uisoh_info));
 	uisoh_info_p->uisoh_info_uploading = false;
-	pr_info("success\n");
+	pr_debug("success\n");
 }
 
 static int oplus_chg_track_bcc_err_init(struct oplus_chg_track *chip)
@@ -1431,7 +1459,7 @@ static int oplus_chg_track_set_hidl_wls_thrid_err(struct oplus_chg_track_hidl_cm
 	wls_third_err = &(track_chip->track_status.wls_third_err);
 	mutex_lock(&wls_third_err->track_wls_third_err_lock);
 	if (wls_third_err->wls_third_err_uploading) {
-		pr_info("wls_third_err_uploading, should return\n");
+		pr_debug("wls_third_err_uploading, should return\n");
 		mutex_unlock(&wls_third_err->track_wls_third_err_lock);
 		return 0;
 	}
@@ -1465,13 +1493,13 @@ static void oplus_track_upload_wls_third_err_info(struct work_struct *work)
 
 	mutex_lock(&wls_third_err->track_wls_third_err_lock);
 	if (wls_third_err->wls_third_err_uploading) {
-		pr_info("wls_third_err_uploading, should return\n");
+		pr_debug("wls_third_err_uploading, should return\n");
 		mutex_unlock(&wls_third_err->track_wls_third_err_lock);
 		return;
 	}
 
 	if (!strlen(wls_third_err->wls_third_err.err_reason)) {
-		pr_info("wls_third_err len is invalid\n");
+		pr_debug("wls_third_err len is invalid\n");
 		mutex_unlock(&wls_third_err->track_wls_third_err_lock);
 		return;
 	}
@@ -1516,7 +1544,7 @@ static void oplus_track_upload_wls_third_err_info(struct work_struct *work)
 	}
 	memset(&wls_third_err->wls_third_err, 0, sizeof(wls_third_err->wls_third_err));
 	wls_third_err->wls_third_err_uploading = false;
-	pr_info("success\n");
+	pr_debug("success\n");
 }
 
 static int oplus_chg_track_wls_third_err_init(struct oplus_chg_track *chip)
@@ -1551,7 +1579,7 @@ int oplus_chg_track_set_hidl_info(const char *buf, size_t count)
 		return -EINVAL;
 	}
 
-	pr_info("!!!cmd[%d]\n", p_cmd->cmd);
+	pr_debug("!!!cmd[%d]\n", p_cmd->cmd);
 	switch (p_cmd->cmd) {
 	case TRACK_HIDL_BCC_INFO:
 		oplus_chg_track_set_hidl_bcc_info(p_cmd, track_chip);
@@ -1916,6 +1944,28 @@ int oplus_chg_track_get_pmic_err_reason(int err_type, char *err_reason, int len)
 	return charge_index;
 }
 
+int oplus_chg_track_get_bidirect_cp_err_reason(int err_type, char *err_reason, int len)
+{
+	int i;
+	int charge_index = -EINVAL;
+
+	if (!err_reason || !len)
+		return charge_index;
+
+	for (i = 0; i < ARRAY_SIZE(bidirect_cp_err_reason_table); i++) {
+		if (bidirect_cp_err_reason_table[i].err_type == err_type) {
+			strncpy(err_reason, bidirect_cp_err_reason_table[i].err_name, len);
+			charge_index = i;
+			break;
+		}
+	}
+
+	if (i == ARRAY_SIZE(cp_err_reason_table))
+		strncpy(err_reason, "unknow_err", len);
+
+	return charge_index;
+}
+
 int oplus_chg_track_get_cp_err_reason(int err_type, char *err_reason, int len)
 {
 	int i;
@@ -1977,6 +2027,28 @@ int oplus_chg_track_get_cooldown_err_reason(int err_type, char *err_reason, int 
 	}
 
 	if (i == ARRAY_SIZE(cooldown_err_reason_table))
+		strncpy(err_reason, "unknow_err", len);
+
+	return charge_index;
+}
+
+int oplus_chg_get_track_pen_match_err_reason(int err_type, char *err_reason, int len)
+{
+	int i;
+	int charge_index = -EINVAL;
+
+	if (!err_reason || !len)
+		return charge_index;
+
+	for (i = 0; i < ARRAY_SIZE(pen_match_err_reason_table); i++) {
+		if (pen_match_err_reason_table[i].err_type == err_type) {
+			strncpy(err_reason, pen_match_err_reason_table[i].err_name, len);
+			charge_index = i;
+			break;
+		}
+	}
+
+	if (i == ARRAY_SIZE(pen_match_err_reason_table))
 		strncpy(err_reason, "unknow_err", len);
 
 	return charge_index;
@@ -2078,7 +2150,7 @@ static int oplus_chg_track_set_prop(struct oplus_chg_mod *ocm, enum oplus_chg_mo
 	switch (prop) {
 	case OPLUS_CHG_PROP_STATUS:
 		chip->track_status.wls_prop_status = pval->intval;
-		pr_info("wls_prop_status:%d\n", pval->intval);
+		pr_debug("wls_prop_status:%d\n", pval->intval);
 		break;
 	default:
 		pr_err("set prop %d is not supported\n", prop);
@@ -2133,7 +2205,7 @@ static int oplus_chg_track_event_notifier_call(struct notifier_block *nb, unsign
 		}
 
 		if (!strcmp(owner_ocm->desc->name, "wireless")) {
-			pr_info("%s wls present\n", __func__);
+			pr_debug("%s wls present\n", __func__);
 			oplus_chg_track_check_wls_charging_break(true);
 		}
 		break;
@@ -2146,7 +2218,7 @@ static int oplus_chg_track_event_notifier_call(struct notifier_block *nb, unsign
 		}
 
 		if (!strcmp(owner_ocm->desc->name, "wireless")) {
-			pr_info("%s wls offline\n", __func__);
+			pr_debug("%s wls offline\n", __func__);
 			oplus_chg_track_check_wls_charging_break(false);
 		}
 		break;
@@ -2339,7 +2411,7 @@ int oplus_chg_track_obtain_general_info(u8 *curx, int index, int len)
 		oplus_voocphy_get_fastchg_to_normal(), oplus_voocphy_get_fastchg_to_warm(),
 		oplus_voocphy_get_fast_chg_type(), g_track_chip->track_status.pre_fastchg_type,
 		g_track_chip->track_cfg.voocphy_type, g_track_chip->track_status.fastchg_break_info.code);
-	pr_info("curx:%s\n", curx);
+	pr_debug("curx:%s\n", curx);
 
 	return 0;
 }
@@ -2385,7 +2457,7 @@ static int oplus_chg_track_record_general_info(struct oplus_chg_chip *chip, stru
 			index += snprintf(&(p_trigger_data->crux_info[index]), OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
 					  "%s ", g_track_chip->wls_break_crux_info);
 	}
-	pr_info("index:%d\n", index);
+	pr_debug("index:%d\n", index);
 	return 0;
 }
 
@@ -2405,7 +2477,7 @@ static int oplus_chg_track_pack_cool_down_stats(struct oplus_chg_track_status *t
 	index += snprintf(&(cool_down_pack[index]), OPLUS_CHG_TRACK_COOL_DOWN_PACK_LEN - index, "%s,%d",
 			  cool_down_stats_table[i].level_name,
 			  cool_down_stats_table[i].time * TRACK_THRAD_PERIOD_TIME_S);
-	pr_info("i=%d, cool_down_pack[%s]\n", i, cool_down_pack);
+	pr_debug("i=%d, cool_down_pack[%s]\n", i, cool_down_pack);
 
 	return 0;
 }
@@ -2419,7 +2491,7 @@ static void oplus_chg_track_record_charger_info(struct oplus_chg_chip *chip, opl
 	if (chip == NULL || p_trigger_data == NULL || track_status == NULL)
 		return;
 
-	pr_info("start\n");
+	pr_debug("start\n");
 	memset(p_trigger_data->crux_info, 0, sizeof(p_trigger_data->crux_info));
 	index += snprintf(&(p_trigger_data->crux_info[index]), OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
 			  "$$power_mode@@%s", track_status->power_info.power_mode);
@@ -2535,7 +2607,7 @@ static void oplus_chg_track_record_charger_info(struct oplus_chg_chip *chip, opl
 				  "$$hyper_sta@@%s", track_status->hyper_info);
 	} else {
 		index += snprintf(&(p_trigger_data->crux_info[index]), OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
-				  "$$hyper_en@@%d", track_status->hyper_en);
+				  "$$hyper_sta@@hyper_en=%d", track_status->hyper_en);
 	}
 
 	index += snprintf(&(p_trigger_data->crux_info[index]), OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
@@ -2564,6 +2636,10 @@ static void oplus_chg_track_record_charger_info(struct oplus_chg_chip *chip, opl
 
 	index += snprintf(&(p_trigger_data->crux_info[index]), OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$mmi_chg@@%d",
 			  track_status->once_mmi_chg);
+
+	index += snprintf(&(p_trigger_data->crux_info[index]),
+			  OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
+			  "$$chg_cycle_status@@%d", track_status->once_chg_cycle_status);
 
 	oplus_chg_track_record_general_info(chip, track_status, p_trigger_data, index);
 }
@@ -2639,7 +2715,7 @@ static void oplus_chg_track_cal_chg_five_mins_capacity_work(struct work_struct *
 		return;
 
 	chip->track_status.chg_five_mins_cap = charger_chip->soc - chip->track_status.chg_start_soc;
-	pr_info("chg_five_mins_soc:%d, start_chg_soc:%d, "
+	pr_debug("chg_five_mins_soc:%d, start_chg_soc:%d, "
 		"chg_five_mins_cap:%d\n",
 		charger_chip->soc, chip->track_status.chg_start_soc, chip->track_status.chg_five_mins_cap);
 }
@@ -2654,7 +2730,7 @@ static void oplus_chg_track_cal_chg_ten_mins_capacity_work(struct work_struct *w
 		return;
 
 	chip->track_status.chg_ten_mins_cap = charger_chip->soc - chip->track_status.chg_start_soc;
-	pr_info("chg_ten_mins_soc:%d, start_chg_soc:%d, chg_ten_mins_cap:%d\n", charger_chip->soc,
+	pr_debug("chg_ten_mins_soc:%d, start_chg_soc:%d, chg_ten_mins_cap:%d\n", charger_chip->soc,
 		chip->track_status.chg_start_soc, chip->track_status.chg_ten_mins_cap);
 }
 
@@ -2696,7 +2772,7 @@ static void oplus_chg_track_check_wired_online_work(struct work_struct *work)
 	track_status = &(g_chip->track_status);
 	mutex_lock(&g_chip->online_hold_lock);
 	if (track_status->wired_online_check_stop) {
-		pr_info("!!!online check_stop. should return\n");
+		pr_debug("!!!online check_stop. should return\n");
 		mutex_unlock(&g_chip->online_hold_lock);
 		return;
 	}
@@ -2708,7 +2784,7 @@ static void oplus_chg_track_check_wired_online_work(struct work_struct *work)
 		      oplus_vooc_get_btb_temp_over() || (!chip->mmi_fastchg) || chip->chg_ops->check_chrdet_status())) {
 			track_status->wired_online = 0;
 			track_status->wired_online_check_count = 0;
-			pr_info("!!!break. wired_online:%d\n", track_status->wired_online);
+			pr_debug("!!!break. wired_online:%d\n", track_status->wired_online);
 		}
 	} else {
 		track_status->wired_online_check_count = 0;
@@ -2718,7 +2794,7 @@ static void oplus_chg_track_check_wired_online_work(struct work_struct *work)
 		schedule_delayed_work(&g_chip->check_wired_online_work, msecs_to_jiffies(TRACK_ONLINE_CHECK_T_MS));
 	mutex_unlock(&g_chip->online_hold_lock);
 
-	pr_info("online:%d, online_check_count:%d\n", track_status->wired_online,
+	pr_debug("online:%d, online_check_count:%d\n", track_status->wired_online,
 		track_status->wired_online_check_count);
 }
 
@@ -2807,6 +2883,7 @@ static int oplus_chg_track_init(struct oplus_chg_track *track_dev)
 	chip->track_status.real_chg_type = POWER_SUPPLY_TYPE_UNKNOWN;
 	chip->track_status.charger_type_backup = POWER_SUPPLY_TYPE_UNKNOWN;
 	chip->track_status.once_mmi_chg = false;
+	chip->track_status.once_chg_cycle_status = CHG_CYCLE_VOTER__NONE;
 	chip->track_status.hyper_en = 0;
 
 	memset(&(chip->track_status.fastchg_break_info), 0, sizeof(chip->track_status.fastchg_break_info));
@@ -2958,14 +3035,14 @@ int oplus_chg_track_upload_trigger_data(oplus_chg_track_trigger data)
 	if (!oplus_chg_track_trigger_data_is_valid(&data))
 		return TRACK_CMD_ERROR_DATA_INVALID;
 
-	pr_info("start\n");
+	pr_debug("start\n");
 	mutex_lock(&chip->trigger_ack_lock);
 	mutex_lock(&chip->trigger_data_lock);
 	memset(&chip->trigger_data, 0, sizeof(oplus_chg_track_trigger));
 	chip->trigger_data.type_reason = data.type_reason;
 	chip->trigger_data.flag_reason = data.flag_reason;
 	strncpy(chip->trigger_data.crux_info, data.crux_info, OPLUS_CHG_TRACK_CURX_INFO_LEN - 1);
-	pr_info("type_reason:%d, flag_reason:%d, crux_info[%s]\n", chip->trigger_data.type_reason,
+	pr_debug("type_reason:%d, flag_reason:%d, crux_info[%s]\n", chip->trigger_data.type_reason,
 		chip->trigger_data.flag_reason, chip->trigger_data.crux_info);
 	chip->trigger_data_ok = true;
 	mutex_unlock(&chip->trigger_data_lock);
@@ -2981,7 +3058,7 @@ int oplus_chg_track_upload_trigger_data(oplus_chg_track_trigger data)
 		return TRACK_CMD_ERROR_TIME_OUT;
 	}
 	rc = 0;
-	pr_info("success\n");
+	pr_debug("success\n");
 	mutex_unlock(&chip->trigger_ack_lock);
 
 	return rc;
@@ -2992,7 +3069,7 @@ static int oplus_chg_track_thread(void *data)
 	int rc = 0;
 	struct oplus_chg_track *chip = (struct oplus_chg_track *)data;
 
-	pr_info("start\n");
+	pr_debug("start\n");
 	while (!kthread_should_stop()) {
 		mutex_lock(&chip->upload_lock);
 		rc = wait_event_interruptible(chip->upload_wq, chip->trigger_data_ok);
@@ -3102,7 +3179,7 @@ static int oplus_chg_adsp_track_thread(void *data)
 		return -ENOMEM;
 	}
 	memset(chip->chg_power_info, 0, sizeof(chip->chg_power_info));
-	pr_info("start\n");
+	pr_debug("start\n");
 	while (!kthread_should_stop()) {
 		mutex_lock(&chip->adsp_upload_lock);
 		rc = wait_event_interruptible(chip->adsp_upload_wq, !kfifo_is_empty(&chip->adsp_fifo));
@@ -3133,7 +3210,7 @@ static int oplus_chg_adsp_track_thread(void *data)
 					  chip->chg_power_info);
 			oplus_chg_track_upload_trigger_data(*ap_data);
 		}
-		pr_info("crux_info:%s\n", adsp_data->adsp_crux_info);
+		pr_debug("crux_info:%s\n", adsp_data->adsp_crux_info);
 	}
 
 	kfree(adsp_data);
@@ -3171,7 +3248,7 @@ static int oplus_chg_track_get_local_time_s(void)
 	int local_time_s;
 
 	local_time_s = local_clock() / TRACK_LOCAL_T_NS_TO_S_THD;
-	pr_info("local_time_s:%d\n", local_time_s);
+	pr_debug("local_time_s:%d\n", local_time_s);
 
 	return local_time_s;
 }
@@ -3255,7 +3332,7 @@ static void oplus_chg_track_upload_info_dwork(struct work_struct *work)
 		queue_delayed_work(chip->trigger_upload_wq, &chip->upload_info_dwork,
 				   msecs_to_jiffies(OPLUS_CHG_UPDATE_INFO_DELAY_MS));
 
-	pr_info("retry_cnt: %d, ret = %d\n", chip->dwork_retry_cnt, ret);
+	pr_debug("retry_cnt: %d, ret = %d\n", chip->dwork_retry_cnt, ret);
 	chip->dwork_retry_cnt--;
 }
 
@@ -3265,7 +3342,7 @@ static int oplus_chg_track_handle_wired_type_info(struct oplus_chg_chip *chip,
 	int charger_type = 0;
 
 	if (track_status->power_info.wired_info.adapter_id) {
-		pr_info("has know type and not handle\n");
+		pr_debug("has know type and not handle\n");
 		return charger_type;
 	}
 
@@ -3274,7 +3351,7 @@ static int oplus_chg_track_handle_wired_type_info(struct oplus_chg_chip *chip,
 	    strcmp(track_status->power_info.wired_info.adapter_type, "unknow")) {
 		if (!((type == TRACK_CHG_GET_THTS_TIME_TYPE && oplus_vooc_get_fast_chg_type()) ||
 		      (type == TRACK_CHG_GET_LAST_TIME_TYPE && track_status->pre_fastchg_type))) {
-			pr_info("non dcp or unknow or svooc or ufcs, not handle\n");
+			pr_debug("non dcp or unknow or svooc or ufcs, not handle\n");
 			return charger_type;
 		}
 	}
@@ -3320,7 +3397,10 @@ static int oplus_chg_track_handle_wired_type_info(struct oplus_chg_chip *chip,
 		oplus_chg_track_get_vooc_type_info(track_status->pre_fastchg_type, track_status);
 	}
 
-	pr_info("power_mode:%s, type:%s, adapter_id:0x%0x, power:%d\n", track_status->power_info.power_mode,
+	if (!strcmp(track_status->power_info.wired_info.adapter_type, "pps"))
+		track_status->power_info.wired_info.power = oplus_pps_get_power()*1000;
+
+	pr_debug("power_mode:%s, type:%s, adapter_id:0x%0x, power:%d\n", track_status->power_info.power_mode,
 		track_status->power_info.wired_info.adapter_type, track_status->power_info.wired_info.adapter_id,
 		track_status->power_info.wired_info.power);
 
@@ -3363,7 +3443,7 @@ static int oplus_chg_track_handle_wls_type_info(struct oplus_chg_track_status *t
 	if (max_wls_power)
 		track_status->power_info.wls_info.power = max_wls_power;
 
-	pr_info("power_mode:%s, type:%s, dock_type:%s, power:%d\n", track_status->power_info.power_mode,
+	pr_debug("power_mode:%s, type:%s, dock_type:%s, power:%d\n", track_status->power_info.power_mode,
 		track_status->power_info.wls_info.adapter_type, track_status->power_info.wls_info.dock_type,
 		track_status->power_info.wls_info.power);
 
@@ -3387,7 +3467,7 @@ static int oplus_chg_track_handle_batt_full_reason(struct oplus_chg_chip *chip,
 		notify_flag = track_status->debug_chg_notify_flag;
 	if (!strlen(track_status->batt_full_reason))
 		oplus_chg_track_get_batt_full_reason_info(notify_flag, track_status);
-	pr_info("track_notify_flag:%d, chager_notify_flag:%d, "
+	pr_debug("track_notify_flag:%d, chager_notify_flag:%d, "
 		"full_reason[%s]\n",
 		notify_flag, chip->notify_flag, track_status->batt_full_reason);
 
@@ -3431,7 +3511,7 @@ static int oplus_chg_track_check_chg_abnormal(struct oplus_chg_chip *chip, struc
 		oplus_chg_track_get_chg_abnormal_reason_info(NOTIFY_BAT_FULL_THIRD_BATTERY, track_status);
 	}
 
-	pr_info("track_notify_code:0x%x, chager_notify_code:0x%x, "
+	pr_debug("track_notify_code:0x%x, chager_notify_code:0x%x, "
 		"abnormal_reason[%s]\n",
 		notify_code, chip->notify_code, track_status->chg_abnormal_reason);
 
@@ -3473,17 +3553,21 @@ static int oplus_chg_track_cal_chg_common_mesg(struct oplus_chg_chip *chip, stru
 	}
 
 	if (track_status->power_info.power_type == TRACK_CHG_TYPE_WIRELESS) {
-		pr_info("wls_skew_cnt:%d, chg_verity:%d\n", track_status->wls_skew_effect_cnt,
+		pr_debug("wls_skew_cnt:%d, chg_verity:%d\n", track_status->wls_skew_effect_cnt,
 			track_status->chg_verity);
 	}
 
 	if (!track_status->once_mmi_chg && !chip->mmi_chg)
 		track_status->once_mmi_chg = true;
 
-	pr_info("chg_max_temp:%d, batt_max_temp:%d, batt_max_curr:%d, "
-		"batt_max_vol:%d, once_mmi_chg:%d\n",
-		track_status->chg_max_temp, track_status->batt_max_temp, track_status->batt_max_curr,
-		track_status->batt_max_vol, track_status->once_mmi_chg);
+	if (!track_status->once_chg_cycle_status && chip->chg_cycle_status)
+		track_status->once_chg_cycle_status = chip->chg_cycle_status;
+
+	pr_debug("chg_max_temp:%d, batt_max_temp:%d, batt_max_curr:%d, "
+		"batt_max_vol:%d, once_mmi_chg:%d, once_chg_cycle_status:%d\n",
+		track_status->chg_max_temp, track_status->batt_max_temp,
+		track_status->batt_max_curr, track_status->batt_max_vol,
+		track_status->once_mmi_chg, track_status->once_chg_cycle_status);
 
 	return 0;
 }
@@ -3524,7 +3608,7 @@ static int oplus_chg_track_cal_cool_down_stats(struct oplus_chg_chip *chip, stru
 	track_status->cool_down_status = chip->cool_down;
 	track_status->cool_down_status_change_t = curr_time;
 
-	pr_info("cool_down_status:%d, cool_down_tatus_change_t:%d\n", track_status->cool_down_status,
+	pr_debug("cool_down_status:%d, cool_down_tatus_change_t:%d\n", track_status->cool_down_status,
 		track_status->cool_down_status_change_t);
 
 	return 0;
@@ -3551,8 +3635,13 @@ static int oplus_chg_track_cal_no_charging_stats(struct oplus_chg_chip *chip,
 
 	if (chip->prop_status == POWER_SUPPLY_STATUS_CHARGING) {
 		track_status->chg_total_cnt++;
-		if (chip->icharging > 0)
-			track_status->chg_no_charging_cnt++;
+		if (oplus_switching_support_parallel_chg()) {
+			if ((chip->icharging + chip->sub_batt_icharging) > 0)
+				track_status->chg_no_charging_cnt++;
+		} else {
+			if (chip->icharging > 0)
+				track_status->chg_no_charging_cnt++;
+		}
 	}
 
 	return 0;
@@ -3580,7 +3669,7 @@ static int oplus_chg_track_cal_ledon_ledoff_average_speed(struct oplus_chg_track
 	}
 
 	track_status->led_onoff_power_cal = true;
-	pr_info("ledon_ave_speed:%d, ledoff_ave_speed:%d\n", track_status->ledon_ave_speed,
+	pr_debug("ledon_ave_speed:%d, ledoff_ave_speed:%d\n", track_status->ledon_ave_speed,
 		track_status->ledoff_ave_speed);
 	return 0;
 }
@@ -3644,14 +3733,14 @@ static int oplus_chg_track_cal_led_on_stats(struct oplus_chg_chip *chip, struct 
 		track_status->led_change_rm = chip->batt_rm;
 	}
 	track_status->led_on = chip->led_on;
-	pr_info("continue_ledoff_t:%d, continue_ledon_t:%d\n", track_status->continue_ledoff_time,
+	pr_debug("continue_ledoff_t:%d, continue_ledon_t:%d\n", track_status->continue_ledoff_time,
 		track_status->continue_ledon_time);
 
 	if (!oplus_chg_track_charger_exist(chip) || track_status->chg_report_full_time ||
 	    track_status->chg_fast_full_time || chip->soc >= TRACK_LED_MONITOR_SOC_POINT)
 		oplus_chg_track_cal_ledon_ledoff_average_speed(track_status);
 
-	pr_info("ch_t:%d, ch_rm:%d, ledoff_rm:%d, ledoff_t:%d, ledon_rm:%d, "
+	pr_debug("ch_t:%d, ch_rm:%d, ledoff_rm:%d, ledoff_t:%d, ledon_rm:%d, "
 		"ledon_t:%d\n",
 		track_status->led_change_t, track_status->led_change_rm, track_status->ledoff_rm,
 		track_status->ledoff_time, track_status->ledon_rm, track_status->ledon_time);
@@ -3675,7 +3764,7 @@ static bool oplus_chg_track_is_no_charging(struct oplus_chg_track_status *track_
 
 	memcpy(wired_adapter_type, track_status->power_info.wired_info.adapter_type, OPLUS_CHG_TRACK_POWER_TYPE_LEN);
 	memcpy(wls_adapter_type, track_status->power_info.wls_info.adapter_type, OPLUS_CHG_TRACK_POWER_TYPE_LEN);
-	pr_info("wired_adapter_type:%s, wls_adapter_type:%s\n", wired_adapter_type, wls_adapter_type);
+	pr_debug("wired_adapter_type:%s, wls_adapter_type:%s\n", wired_adapter_type, wls_adapter_type);
 	if (!strcmp(wired_adapter_type, "unknow") || !strcmp(wired_adapter_type, "sdp") ||
 	    !strcmp(wls_adapter_type, "unknow"))
 		ret = false;
@@ -3683,7 +3772,7 @@ static bool oplus_chg_track_is_no_charging(struct oplus_chg_track_status *track_
 	if (track_status->debug_no_charging)
 		ret = true;
 
-	pr_info("chg_no_charging_cnt:%d, chg_total_cnt:%d, "
+	pr_debug("chg_no_charging_cnt:%d, chg_total_cnt:%d, "
 		"debug_no_charging:%d, ret:%d",
 		track_status->chg_no_charging_cnt, track_status->chg_total_cnt, track_status->debug_no_charging, ret);
 
@@ -3700,7 +3789,7 @@ static void oplus_chg_track_record_break_charging_info(struct oplus_chg_track *t
 	if (track_chip == NULL)
 		return;
 
-	pr_info("start, type=%d\n", power_info.power_type);
+	pr_debug("start, type=%d\n", power_info.power_type);
 	track_status = &(track_chip->track_status);
 
 	if (power_info.power_type == TRACK_CHG_TYPE_WIRE) {
@@ -3732,7 +3821,7 @@ static void oplus_chg_track_record_break_charging_info(struct oplus_chg_track *t
 			index += snprintf(&(track_chip->charging_break_trigger.crux_info[index]),
 					  OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$crux_info@@%s", sub_crux_info);
 		}
-		pr_info("wired[%s]\n", track_chip->charging_break_trigger.crux_info);
+		pr_debug("wired[%s]\n", track_chip->charging_break_trigger.crux_info);
 	} else if (power_info.power_type == TRACK_CHG_TYPE_WIRELESS) {
 		memset(track_chip->wls_charging_break_trigger.crux_info, 0,
 		       sizeof(track_chip->wls_charging_break_trigger.crux_info));
@@ -3753,7 +3842,7 @@ static void oplus_chg_track_record_break_charging_info(struct oplus_chg_track *t
 		}
 		oplus_chg_track_record_general_info(chip, track_status, &(track_chip->wls_charging_break_trigger),
 						    index);
-		pr_info("wls[%s]\n", track_chip->wls_charging_break_trigger.crux_info);
+		pr_debug("wls[%s]\n", track_chip->wls_charging_break_trigger.crux_info);
 	}
 }
 
@@ -3780,11 +3869,11 @@ static int oplus_chg_track_check_fastchg_to_normal(struct oplus_chg_track *track
 			track_status->fastchg_to_normal = true;
 		break;
 	default:
-		pr_info("!!!voocphy type is error, should not go here\n");
+		pr_debug("!!!voocphy type is error, should not go here\n");
 		break;
 	}
 
-	pr_info("!!!fastchg_to_normal: %d\n", track_status->fastchg_to_normal);
+	pr_debug("!!!fastchg_to_normal: %d\n", track_status->fastchg_to_normal);
 	return 0;
 }
 
@@ -3798,14 +3887,14 @@ int oplus_chg_track_set_fastchg_break_code(int fastchg_break_code)
 	if (!g_track_chip)
 		return -EINVAL;
 
-	pr_info("oplus_chg_track_set_fastchg_break_code[%d]\n", fastchg_break_code);
+	pr_debug("oplus_chg_track_set_fastchg_break_code[%d]\n", fastchg_break_code);
 	track_chip = g_track_chip;
 	track_status = &track_chip->track_status;
 	track_status->fastchg_break_info.code = fastchg_break_code;
 	oplus_chg_track_check_fastchg_to_normal(track_chip, fastchg_break_code);
 	if (oplus_vooc_get_fast_chg_type())
 		track_status->pre_fastchg_type = oplus_vooc_get_fast_chg_type();
-	pr_info("fastchg_break_code[%d], pre_fastchg_type[0x%x]\n", fastchg_break_code, track_status->pre_fastchg_type);
+	pr_debug("fastchg_break_code[%d], pre_fastchg_type[0x%x]\n", fastchg_break_code, track_status->pre_fastchg_type);
 	flv = oplus_chg_get_fv_when_vooc(chip);
 	if ((track_status->pre_fastchg_type == CHARGER_SUBTYPE_FASTCHG_VOOC) && flv &&
 	    (flv - TRACK_CHG_VOOC_BATT_VOL_DIFF_MV < chip->batt_volt)) {
@@ -3878,7 +3967,7 @@ static int oplus_chg_track_match_fastchg_break_reason(struct oplus_chg_track *tr
 		return -EINVAL;
 	track_status = &track_chip->track_status;
 
-	pr_info("voocphy_type:%d, code:0x%x\n", track_chip->track_cfg.voocphy_type,
+	pr_debug("voocphy_type:%d, code:0x%x\n", track_chip->track_cfg.voocphy_type,
 		track_status->fastchg_break_info.code);
 	switch (track_chip->track_cfg.voocphy_type) {
 	case TRACK_ADSP_VOOCPHY:
@@ -3892,7 +3981,7 @@ static int oplus_chg_track_match_fastchg_break_reason(struct oplus_chg_track *tr
 		oplus_chg_track_match_mcu_voocphy_break_reason(track_status);
 		break;
 	default:
-		pr_info("!!!voocphy type is error, should not go here\n");
+		pr_debug("!!!voocphy type is error, should not go here\n");
 		break;
 	}
 
@@ -3913,7 +4002,7 @@ void oplus_chg_track_record_chg_type_info(void)
 	if (chip->chg_ops->get_charger_subtype)
 		sub_chg_type = chip->chg_ops->get_charger_subtype();
 	g_track_chip->track_status.real_chg_type = chg_type | (sub_chg_type << 8);
-	pr_info("real_chg_type:0x%04x\n", g_track_chip->track_status.real_chg_type);
+	pr_debug("real_chg_type:0x%04x\n", g_track_chip->track_status.real_chg_type);
 }
 
 static int oplus_chg_track_obtain_wired_break_sub_crux_info(struct oplus_chg_track_status *track_status,
@@ -3993,7 +4082,7 @@ int oplus_chg_track_check_wls_charging_break(int wls_connect)
 	track_chip = g_track_chip;
 	track_status = &track_chip->track_status;
 
-	pr_info("pre_wls_connect[%d], wls_connect[%d], break_recording[%d], "
+	pr_debug("pre_wls_connect[%d], wls_connect[%d], break_recording[%d], "
 		"online_keep[%d]\n",
 		pre_wls_connect, wls_connect, break_recording, track_status->wls_online_keep);
 
@@ -4018,7 +4107,7 @@ int oplus_chg_track_check_wls_charging_break(int wls_connect)
 		} else {
 			break_recording = 0;
 		}
-		pr_info("detal_t:%d, wls_attach_time = %d\n",
+		pr_debug("detal_t:%d, wls_attach_time = %d\n",
 			track_status->wls_attach_time_ms - track_status->wls_detach_time_ms,
 			track_status->wls_attach_time_ms);
 	} else if (!wls_connect && (pre_wls_connect != wls_connect)) {
@@ -4028,7 +4117,7 @@ int oplus_chg_track_check_wls_charging_break(int wls_connect)
 		oplus_chg_track_obtain_wls_break_sub_crux_info(track_chip, track_chip->wls_break_crux_info);
 		power_info = track_status->power_info;
 		oplus_chg_wake_update_work();
-		pr_info("wls_detach_time = %d\n", track_status->wls_detach_time_ms);
+		pr_debug("wls_detach_time = %d\n", track_status->wls_detach_time_ms);
 	}
 	if (wls_connect)
 		track_status->wls_online_keep = false;
@@ -4050,7 +4139,7 @@ static bool oplus_chg_track_wired_fastchg_good_exit_code(struct oplus_chg_track 
 	track_status = &track_chip->track_status;
 	code = track_status->fastchg_break_info.code;
 
-	pr_info("voocphy_type:%d, code:0x%x\n", track_chip->track_cfg.voocphy_type,
+	pr_debug("voocphy_type:%d, code:0x%x\n", track_chip->track_cfg.voocphy_type,
 		track_status->fastchg_break_info.code);
 	switch (track_chip->track_cfg.voocphy_type) {
 	case TRACK_ADSP_VOOCPHY:
@@ -4063,7 +4152,7 @@ static bool oplus_chg_track_wired_fastchg_good_exit_code(struct oplus_chg_track 
 	case TRACK_AP_SINGLE_CP_VOOCPHY:
 	case TRACK_AP_DUAL_CP_VOOCPHY:
 		if (!code || code == TRACK_CP_VOOCPHY_FULL || code == TRACK_CP_VOOCPHY_BATT_TEMP_OVER ||
-		    code == TRACK_CP_VOOCPHY_USER_EXIT_FASTCHG)
+		    code == TRACK_CP_VOOCPHY_USER_EXIT_FASTCHG || code == TRACK_CP_VOOCPHY_SWITCH_TEMP_RANGE)
 			ret = true;
 		else
 			ret = false;
@@ -4076,7 +4165,7 @@ static bool oplus_chg_track_wired_fastchg_good_exit_code(struct oplus_chg_track 
 			ret = false;
 		break;
 	default:
-		pr_info("!!!voocphy type is error, should not go here\n");
+		pr_debug("!!!voocphy type is error, should not go here\n");
 		break;
 	}
 
@@ -4100,7 +4189,7 @@ int oplus_chg_track_check_wired_charging_break(int vbus_rising)
 	track_chip = g_track_chip;
 	track_status = &track_chip->track_status;
 
-	pr_info("pre_vbus_rising[%d], vbus_rising[%d], break_recording[%d]\n", pre_vbus_rising, vbus_rising,
+	pr_debug("pre_vbus_rising[%d], vbus_rising[%d], break_recording[%d]\n", pre_vbus_rising, vbus_rising,
 		break_recording);
 
 	if (vbus_rising && (pre_vbus_rising != vbus_rising)) {
@@ -4111,11 +4200,11 @@ int oplus_chg_track_check_wired_charging_break(int vbus_rising)
 		else
 			track_status->chg_attach_time_ms = local_clock() / TRACK_LOCAL_T_NS_TO_MS_THD;
 		fastchg_code_ok = oplus_chg_track_wired_fastchg_good_exit_code(track_chip);
-		pr_info("detal_t:%d, chg_attach_time = %d, "
+		pr_debug("detal_t:%d, chg_attach_time = %d, "
 			"fastchg_break_code=0x%x\n",
 			track_status->chg_attach_time_ms - track_status->chg_detach_time_ms,
 			track_status->chg_attach_time_ms, track_status->fastchg_break_info.code);
-		pr_info("fastchg_code_ok:%d, pre_fastchg_type = %d\n", fastchg_code_ok, track_status->pre_fastchg_type);
+		pr_debug("fastchg_code_ok:%d, pre_fastchg_type = %d\n", fastchg_code_ok, track_status->pre_fastchg_type);
 		if ((((track_status->chg_attach_time_ms - track_status->chg_detach_time_ms <
 		       track_chip->track_cfg.fast_chg_break_t_thd) &&
 		      (!fastchg_code_ok)) ||
@@ -4123,12 +4212,12 @@ int oplus_chg_track_check_wired_charging_break(int vbus_rising)
 		       track_chip->track_cfg.ufcs_chg_break_t_thd) &&
 		      !strcmp(power_info.wired_info.adapter_type, "ufcs"))) &&
 		    track_status->mmi_chg && track_status->pre_fastchg_type) {
-			pr_info("attach[%d], detach[%d], ufcs[%d] "
+			pr_debug("attach[%d], detach[%d], ufcs[%d] "
 				"adapter_type[%s]\n",
 				track_status->chg_attach_time_ms, track_status->chg_detach_time_ms,
 				track_chip->track_cfg.ufcs_chg_break_t_thd, power_info.wired_info.adapter_type);
 			if (!break_recording) {
-				pr_info("should report\n");
+				pr_debug("should report\n");
 				break_recording = true;
 				track_chip->charging_break_trigger.flag_reason = TRACK_NOTIFY_FLAG_FAST_CHARGING_BREAK;
 				oplus_chg_track_match_fastchg_break_reason(track_chip);
@@ -4191,7 +4280,7 @@ int oplus_chg_track_check_wired_charging_break(int vbus_rising)
 			if (chip->charger_type == POWER_SUPPLY_TYPE_UNKNOWN)
 				track_status->charger_type_backup = real_chg_type & 0xff;
 			track_status->pre_chg_subtype = (real_chg_type >> 8) & 0xff;
-			pr_info("need exchange real_chg_type:%d\n", real_chg_type);
+			pr_debug("need exchange real_chg_type:%d\n", real_chg_type);
 		}
 		if (track_status->pre_chg_subtype == CHARGER_SUBTYPE_DEFAULT)
 			track_status->pre_chg_subtype = chip->charger_subtype;
@@ -4202,7 +4291,7 @@ int oplus_chg_track_check_wired_charging_break(int vbus_rising)
 						    sizeof(track_chip->wired_break_crux_info));
 		power_info = track_status->power_info;
 		track_status->mmi_chg = chip->mmi_chg;
-		pr_info("chg_detach_time = %d, mmi_chg=%d, wired_online=%d\n", track_status->chg_detach_time_ms,
+		pr_debug("chg_detach_time = %d, mmi_chg=%d, wired_online=%d\n", track_status->chg_detach_time_ms,
 			track_status->mmi_chg, track_status->wired_online);
 	}
 
@@ -4288,7 +4377,7 @@ static int oplus_chg_track_cal_tbatt_status(struct oplus_chg_chip *chip, struct 
 		return -EINVAL;
 
 	if (chip->prop_status != POWER_SUPPLY_STATUS_CHARGING) {
-		pr_info("!!!not chging, should return\n");
+		pr_debug("!!!not chging, should return\n");
 		return 0;
 	}
 
@@ -4301,7 +4390,7 @@ static int oplus_chg_track_cal_tbatt_status(struct oplus_chg_chip *chip, struct 
 	     (chip->tbatt_status == BATTERY_STATUS__REMOVED)))
 		track_status->tbatt_cold_once = true;
 
-	pr_info("tbatt_warm_once:%d, tbatt_cold_once:%d\n", track_status->tbatt_warm_once,
+	pr_debug("tbatt_warm_once:%d, tbatt_cold_once:%d\n", track_status->tbatt_warm_once,
 		track_status->tbatt_cold_once);
 
 	return 0;
@@ -4432,11 +4521,11 @@ static int oplus_chg_track_cal_section_soc_inc_rm(struct oplus_chg_chip *chip,
 		break;
 	}
 
-	pr_info("soc_sect_status:%d, time_go_next_status:%d, "
+	pr_debug("soc_sect_status:%d, time_go_next_status:%d, "
 		"rm_go_next_status:%d\n",
 		track_status->soc_sect_status, time_go_next_status, rm_go_next_status);
 
-	pr_info("soc_low_sect_cont_time:%d, soc_low_sect_incr_rm:%d, \
+	pr_debug("soc_low_sect_cont_time:%d, soc_low_sect_incr_rm:%d, \
 		soc_medium_sect_cont_time:%d, soc_medium_sect_incr_rm:%d \
 		soc_high_sect_cont_time:%d, soc_high_sect_incr_rm:%d\n",
 		track_status->soc_low_sect_cont_time, track_status->soc_low_sect_incr_rm,
@@ -4461,7 +4550,7 @@ static bool oplus_chg_track_burst_soc_sect_speed(struct oplus_chg_chip *chip,
 	    !track_status->soc_low_sect_cont_time)
 		return true;
 
-	pr_info("low_ref_curr:%d, medium_ref_curr:%d, high_ref_curr:%d\n",
+	pr_debug("low_ref_curr:%d, medium_ref_curr:%d, high_ref_curr:%d\n",
 		speed_ref[TRACK_SOC_SECTION_LOW - 1].ref_curr, speed_ref[TRACK_SOC_SECTION_MEDIUM - 1].ref_curr,
 		speed_ref[TRACK_SOC_SECTION_HIGH - 1].ref_curr);
 
@@ -4476,21 +4565,21 @@ static bool oplus_chg_track_burst_soc_sect_speed(struct oplus_chg_chip *chip,
 	if ((track_status->soc_low_sect_cont_time > TRACK_REF_TIME_6S) &&
 	    ((soc_low_sect_incr_rm / track_status->soc_low_sect_cont_time) <
 	     speed_ref[TRACK_SOC_SECTION_LOW - 1].ref_curr)) {
-		pr_info("slow charging when soc low section\n");
+		pr_debug("slow charging when soc low section\n");
 		ret = true;
 	}
 
 	if (!ret && (track_status->soc_medium_sect_cont_time > TRACK_REF_TIME_8S) &&
 	    ((soc_medium_sect_incr_rm / track_status->soc_medium_sect_cont_time) <
 	     speed_ref[TRACK_SOC_SECTION_MEDIUM - 1].ref_curr)) {
-		pr_info("slow charging when soc medium section\n");
+		pr_debug("slow charging when soc medium section\n");
 		ret = true;
 	}
 
 	if (!ret && (track_status->soc_high_sect_cont_time > TRACK_REF_TIME_10S) &&
 	    ((soc_high_sect_incr_rm / track_status->soc_high_sect_cont_time) <
 	     speed_ref[TRACK_SOC_SECTION_HIGH - 1].ref_curr)) {
-		pr_info("slow charging when soc high section\n");
+		pr_debug("slow charging when soc high section\n");
 		ret = true;
 	}
 
@@ -4508,7 +4597,7 @@ static int oplus_chg_track_get_speed_slow_reason(struct oplus_chg_track_status *
 
 	memcpy(wired_adapter_type, track_status->power_info.wired_info.adapter_type, OPLUS_CHG_TRACK_POWER_TYPE_LEN);
 	memcpy(wls_adapter_type, track_status->power_info.wls_info.adapter_type, OPLUS_CHG_TRACK_POWER_TYPE_LEN);
-	pr_info("wired_adapter_type:%s, wls_adapter_type:%s\n", wired_adapter_type, wls_adapter_type);
+	pr_debug("wired_adapter_type:%s, wls_adapter_type:%s\n", wired_adapter_type, wls_adapter_type);
 
 	if (track_status->tbatt_warm_once)
 		chip->slow_charging_trigger.flag_reason = TRACK_NOTIFY_FLAG_CHG_SLOW_TBATT_WARM;
@@ -4540,7 +4629,7 @@ static int oplus_chg_track_get_speed_slow_reason(struct oplus_chg_track_status *
 		chip->slow_charging_trigger.flag_reason =
 			track_status->debug_slow_charging_reason + TRACK_NOTIFY_FLAG_CHG_SLOW_TBATT_WARM - 1;
 
-	pr_info("flag_reason:%d\n", chip->slow_charging_trigger.flag_reason);
+	pr_debug("flag_reason:%d\n", chip->slow_charging_trigger.flag_reason);
 
 	return 0;
 }
@@ -4609,7 +4698,7 @@ static int oplus_chg_track_cal_batt_full_time(struct oplus_chg_chip *chip, struc
 	if (is_comm_ocm_available(g_track_chip))
 		wls_chg_done = oplus_chg_comm_get_chg_done(g_track_chip->comm_ocm);
 
-	pr_info("pre_wls_ffc_status:%d, wls_ffc_status:%d,\
+	pr_debug("pre_wls_ffc_status:%d, wls_ffc_status:%d,\
 	    pre_wls_chg_done:%d,wls_chg_done:%d",
 		pre_wls_ffc_status, wls_ffc_status, pre_wls_chg_done, wls_chg_done);
 	if (!track_status->chg_fast_full_time &&
@@ -4627,7 +4716,7 @@ static int oplus_chg_track_cal_batt_full_time(struct oplus_chg_chip *chip, struc
 			track_status->chg_average_speed = TRACK_TIME_1MIN_THD *
 							  (chip->batt_rm - track_status->chg_start_rm) /
 							  (curr_time - track_status->chg_start_time);
-		pr_info("curr_time:%d, start_time:%d, fast_full_time:%d \
+		pr_debug("curr_time:%d, start_time:%d, fast_full_time:%d \
 			curr_rm:%d, chg_start_rm:%d, chg_average_speed:%d\n",
 			curr_time, track_status->chg_start_time, track_status->chg_fast_full_time, chip->batt_rm,
 			track_status->chg_start_rm, track_status->chg_average_speed);
@@ -4661,7 +4750,7 @@ static int oplus_chg_track_cal_batt_full_time(struct oplus_chg_chip *chip, struc
 			track_status->chg_average_speed = TRACK_TIME_1MIN_THD *
 							  (chip->batt_rm - track_status->chg_start_rm) /
 							  (curr_time - track_status->chg_start_time);
-		pr_info("curr_time:%d, start_time:%d, normal_full_time:%d \
+		pr_debug("curr_time:%d, start_time:%d, normal_full_time:%d \
 			curr_rm:%d, chg_start_rm:%d, chg_average_speed:%d\n",
 			curr_time, track_status->chg_start_time, track_status->chg_normal_full_time, chip->batt_rm,
 			track_status->chg_start_rm, track_status->chg_average_speed);
@@ -4801,7 +4890,7 @@ static int oplus_chg_track_cal_period_chg_capaticy(struct oplus_chg_track *track
 	if (track_chip->track_status.chg_start_soc > TRACK_PERIOD_CHG_CAP_MAX_SOC)
 		return ret;
 
-	pr_info("enter\n");
+	pr_debug("enter\n");
 	schedule_delayed_work(&track_chip->cal_chg_five_mins_capacity_work, msecs_to_jiffies(TRACK_TIME_5MIN_JIFF_THD));
 	schedule_delayed_work(&track_chip->cal_chg_ten_mins_capacity_work, msecs_to_jiffies(TRACK_TIME_10MIN_JIFF_THD));
 
@@ -4815,7 +4904,7 @@ static int oplus_chg_track_cancel_cal_period_chg_capaticy(struct oplus_chg_track
 	if (!track_chip)
 		return -EFAULT;
 
-	pr_info("enter\n");
+	pr_debug("enter\n");
 	if (delayed_work_pending(&track_chip->cal_chg_five_mins_capacity_work))
 		cancel_delayed_work_sync(&track_chip->cal_chg_five_mins_capacity_work);
 
@@ -4834,12 +4923,12 @@ static int oplus_chg_track_cal_period_chg_average_speed(struct oplus_chg_track_s
 	if (!track_status || !chip)
 		return -EFAULT;
 
-	pr_info("enter\n");
+	pr_debug("enter\n");
 	if (track_status->chg_average_speed == TRACK_PERIOD_CHG_AVERAGE_SPEED_INIT) {
 		curr_time = oplus_chg_track_get_local_time_s();
 		track_status->chg_average_speed = TRACK_TIME_1MIN_THD * (chip->batt_rm - track_status->chg_start_rm) /
 						  (curr_time - track_status->chg_start_time);
-		pr_info("curr_rm:%d, chg_start_rm:%d, curr_time:%d, chg_start_time:%d,\
+		pr_debug("curr_rm:%d, chg_start_rm:%d, curr_time:%d, chg_start_time:%d,\
 			chg_average_speed:%d\n",
 			chip->batt_rm, track_status->chg_start_rm, curr_time, track_status->chg_start_time,
 			track_status->chg_average_speed);
@@ -4883,22 +4972,22 @@ static void oplus_chg_track_hyper_speed_record(struct oplus_chg_track_status *tr
 
 	if (track_status->hyper_en) {
 		index += snprintf(&(track_status->hyper_info[index]), TRACK_HIDL_HYPER_INFO_LEN - index,
-				  "$$hyper_en@@%d,", track_status->hyper_en);
+				  "hyper_en=%d,", track_status->hyper_en);
 
 		index += snprintf(&(track_status->hyper_info[index]), TRACK_HIDL_HYPER_INFO_LEN - index,
-				  "stop_cap@@%d,", track_status->hyper_stop_soc);
+				  "hyper_stop_cap=%d,", track_status->hyper_stop_soc);
 
 		index += snprintf(&(track_status->hyper_info[index]), TRACK_HIDL_HYPER_INFO_LEN - index,
-				  "stop_temp@@%d,", track_status->hyper_stop_temp);
-
-		index += snprintf(&(track_status->hyper_info[index]), TRACK_HIDL_HYPER_INFO_LEN - index, "last_t@@%d,",
-				  track_status->hyper_last_time);
+				  "hyper_stop_temp=%d,", track_status->hyper_stop_temp);
 
 		index += snprintf(&(track_status->hyper_info[index]), TRACK_HIDL_HYPER_INFO_LEN - index,
-				  "ave_speed@@%d,", track_status->hyper_ave_speed);
+				  "hyper_last_t=%d,", track_status->hyper_last_time);
 
 		index += snprintf(&(track_status->hyper_info[index]), TRACK_HIDL_HYPER_INFO_LEN - index,
-				  "est_save_t@@%d", track_status->hyper_est_save_time);
+				  "hyper_ave_speed=%d,", track_status->hyper_ave_speed);
+
+		index += snprintf(&(track_status->hyper_info[index]), TRACK_HIDL_HYPER_INFO_LEN - index,
+				  "hyper_est_save_t=%d", track_status->hyper_est_save_time);
 	}
 }
 
@@ -4998,8 +5087,9 @@ static int oplus_chg_track_status_reset_when_plugin(struct oplus_chg_chip *chip,
 	oplus_chg_track_cal_period_chg_capaticy(g_track_chip);
 	track_status->prop_status = chip->prop_status;
 	track_status->once_mmi_chg = false;
+	track_status->once_chg_cycle_status = CHG_CYCLE_VOTER__NONE;
 	track_status->fastchg_to_normal = false;
-	pr_info("chg_start_time:%d, chg_start_soc:%d, chg_start_temp:%d, "
+	pr_debug("chg_start_time:%d, chg_start_soc:%d, chg_start_temp:%d, "
 		"prop_status:%d\n",
 		track_status->chg_start_time, track_status->chg_start_soc, track_status->chg_start_temp,
 		track_status->prop_status);
@@ -5020,7 +5110,7 @@ static int oplus_chg_need_record(struct oplus_chg_chip *chip, struct oplus_chg_t
 		return -EFAULT;
 	}
 
-	pr_info("good record charger info and upload charger info\n");
+	pr_debug("good record charger info and upload charger info\n");
 	track_status = &track_chip->track_status;
 	track_status->chg_plugout_utc_t = oplus_chg_track_get_current_time_s(&track_status->chg_plugout_rtc_t);
 	wls_break_work_delay_t = track_chip->track_cfg.wls_chg_break_t_thd + TRACK_TIME_1000MS_JIFF_THD;
@@ -5121,7 +5211,7 @@ static int oplus_chg_track_speed_check(struct oplus_chg_chip *chip)
 	if (!track_record_charger_info && track_recording_time >= TRACK_CYCLE_RECORDIING_TIME_2MIN)
 		track_record_charger_info = true;
 
-	pr_info("track_recording_time=%d, track_record_charger_info=%d\n", track_recording_time,
+	pr_debug("track_recording_time=%d, track_record_charger_info=%d\n", track_recording_time,
 		track_record_charger_info);
 
 	return ret;
@@ -5134,6 +5224,11 @@ static int oplus_chg_track_uisoc_soc_jump_check(struct oplus_chg_chip *chip)
 	int curr_vbatt;
 	struct oplus_chg_track_status *track_status;
 	int judge_curr_soc = 0;
+	struct rtc_time tm;
+	int curr_fcc = 0, curr_rm = 0;
+	int avg_current = 0;
+	static int pre_local_time = 0;
+	int curr_local_time = oplus_chg_track_get_local_time_s();
 
 	if (!g_track_chip)
 		return -EFAULT;
@@ -5143,8 +5238,10 @@ static int oplus_chg_track_uisoc_soc_jump_check(struct oplus_chg_chip *chip)
 		return ret;
 	}
 
-	curr_time_utc = oplus_chg_track_get_local_time_s();
+	curr_time_utc = oplus_chg_track_get_current_time_s(&tm);
 	curr_vbatt = chip->batt_volt;
+	curr_fcc = chip->batt_fcc;
+	curr_rm = chip->batt_rm;
 
 	track_status = &g_track_chip->track_status;
 	if (track_status->curr_soc == -EINVAL) {
@@ -5154,6 +5251,9 @@ static int oplus_chg_track_uisoc_soc_jump_check(struct oplus_chg_chip *chip)
 		track_status->pre_uisoc = chip->ui_soc;
 		track_status->pre_vbatt = curr_vbatt;
 		track_status->pre_time_utc = curr_time_utc;
+		track_status->pre_fcc = curr_fcc;
+		track_status->pre_rm = curr_rm;
+		pre_local_time = curr_local_time;
 		if (chip->rsd.smooth_switch_v2 && chip->rsd.reserve_soc)
 			judge_curr_soc =
 				track_status->curr_soc * OPLUS_FULL_SOC / (OPLUS_FULL_SOC - chip->rsd.reserve_soc);
@@ -5161,20 +5261,21 @@ static int oplus_chg_track_uisoc_soc_jump_check(struct oplus_chg_chip *chip)
 			judge_curr_soc = track_status->curr_soc;
 		if (abs(track_status->curr_uisoc - judge_curr_soc) > OPLUS_CHG_TRACK_UI_S0C_LOAD_JUMP_THD) {
 			track_status->uisoc_load_jumped = true;
-			pr_info("The gap between loaded uisoc and soc is too "
+			pr_debug("The gap between loaded uisoc and soc is too "
 				"large\n");
 			memset(g_track_chip->uisoc_load_trigger.crux_info, 0,
 			       sizeof(g_track_chip->uisoc_load_trigger.crux_info));
 			ret = snprintf(g_track_chip->uisoc_load_trigger.crux_info, OPLUS_CHG_TRACK_CURX_INFO_LEN,
-				       "$$curr_uisoc@@%d"
-				       "$$curr_soc@@%d$$load_uisoc_soc_gap@@%d"
+				       "$$curr_uisoc@@%d$$curr_soc@@%d$$load_uisoc_soc_gap@@%d"
 				       "$$pre_vbatt@@%d$$curr_vbatt@@%d"
 				       "$$pre_time_utc@@%d$$curr_time_utc@@%d"
-				       "$$charger_exist@@%d",
+				       "$$charger_exist@@%d$$curr_smooth_soc@@%d"
+				       "$$curr_fcc@@%d$$curr_rm@@%d$$current@@%d",
 				       track_status->curr_uisoc, track_status->curr_soc,
 				       track_status->curr_uisoc - track_status->curr_soc, track_status->pre_vbatt,
-				       curr_vbatt, track_status->pre_time_utc, curr_time_utc, chip->charger_exist);
-			schedule_delayed_work(&g_track_chip->uisoc_load_trigger_work, msecs_to_jiffies(10000));
+				       curr_vbatt, track_status->pre_time_utc, curr_time_utc, chip->charger_exist, chip->smooth_soc,
+				       curr_fcc, curr_rm, chip->icharging);
+			schedule_delayed_work(&g_track_chip->uisoc_load_trigger_work, msecs_to_jiffies(TRACK_TIME_SCHEDULE_UI_SOC_LOAD_JUMP));
 		}
 	} else {
 		track_status->curr_soc = track_status->debug_soc != OPLUS_CHG_TRACK_DEBUG_UISOC_SOC_INVALID ?
@@ -5185,20 +5286,26 @@ static int oplus_chg_track_uisoc_soc_jump_check(struct oplus_chg_chip *chip)
 						   chip->ui_soc;
 	}
 
+	if (curr_time_utc > track_status->pre_time_utc)
+		avg_current = (track_status->pre_rm - curr_rm) / chip->vbatt_num * TRACK_TIME_1HOU_THD /
+			      (curr_time_utc - track_status->pre_time_utc);
+
 	if (!track_status->soc_jumped &&
 	    abs(track_status->curr_soc - track_status->pre_soc) > OPLUS_CHG_TRACK_S0C_JUMP_THD) {
 		track_status->soc_jumped = true;
-		pr_info("The gap between curr_soc and pre_soc is too large\n");
+		pr_debug("The gap between curr_soc and pre_soc is too large\n");
 		memset(g_track_chip->soc_trigger.crux_info, 0, sizeof(g_track_chip->soc_trigger.crux_info));
 		ret = snprintf(g_track_chip->soc_trigger.crux_info, OPLUS_CHG_TRACK_CURX_INFO_LEN,
-			       "$$curr_soc@@%d"
-			       "$$pre_soc@@%d$$curr_soc_pre_soc_gap@@%d"
+			       "$$curr_soc@@%d$$pre_soc@@%d$$curr_soc_pre_soc_gap@@%d"
 			       "$$pre_vbatt@@%d$$curr_vbatt@@%d"
-			       "$$pre_time_utc@@%d$$curr_time_utc@@%d"
-			       "$$charger_exist@@%d",
+			       "$$pre_time_utc@@%d$$curr_time_utc@@%d$$kernel_diff_t@@%d"
+			       "$$charger_exist@@%d$$avg_current@@%d$$current@@%d"
+			       "$$pre_fcc@@%d$$pre_rm@@%d$$curr_fcc@@%d$$curr_rm@@%d",
 			       track_status->curr_soc, track_status->pre_soc,
 			       track_status->curr_soc - track_status->pre_soc, track_status->pre_vbatt, curr_vbatt,
-			       track_status->pre_time_utc, curr_time_utc, chip->charger_exist);
+			       track_status->pre_time_utc, curr_time_utc, (curr_local_time - pre_local_time),
+			       chip->charger_exist, avg_current, chip->icharging,
+			       track_status->pre_fcc, track_status->pre_rm, curr_fcc, curr_rm);
 		schedule_delayed_work(&g_track_chip->soc_trigger_work, 0);
 	} else {
 		if (track_status->soc_jumped && track_status->curr_soc == track_status->pre_soc)
@@ -5208,18 +5315,20 @@ static int oplus_chg_track_uisoc_soc_jump_check(struct oplus_chg_chip *chip)
 	if (!track_status->uisoc_jumped &&
 	    abs(track_status->curr_uisoc - track_status->pre_uisoc) > OPLUS_CHG_TRACK_UI_S0C_JUMP_THD) {
 		track_status->uisoc_jumped = true;
-		pr_info("The gap between curr_uisoc and pre_uisoc is too "
+		pr_debug("The gap between curr_uisoc and pre_uisoc is too "
 			"large\n");
 		memset(g_track_chip->uisoc_trigger.crux_info, 0, sizeof(g_track_chip->uisoc_trigger.crux_info));
 		ret = snprintf(g_track_chip->uisoc_trigger.crux_info, OPLUS_CHG_TRACK_CURX_INFO_LEN,
-			       "$$curr_uisoc@@%d"
-			       "$$pre_uisoc@@%d$$curr_uisoc_pre_uisoc_gap@@%d"
+			       "$$curr_uisoc@@%d$$pre_uisoc@@%d$$curr_uisoc_pre_uisoc_gap@@%d"
 			       "$$pre_vbatt@@%d$$curr_vbatt@@%d"
-			       "$$pre_time_utc@@%d$$curr_time_utc@@%d"
-			       "$$charger_exist@@%d",
+			       "$$pre_time_utc@@%d$$curr_time_utc@@%d$$kernel_diff_t@@%d"
+			       "$$charger_exist@@%d$$avg_current@@%d$$current@@%d"
+			       "$$pre_fcc@@%d$$pre_rm@@%d$$curr_fcc@@%d$$curr_rm@@%d",
 			       track_status->curr_uisoc, track_status->pre_uisoc,
 			       track_status->curr_uisoc - track_status->pre_uisoc, track_status->pre_vbatt, curr_vbatt,
-			       track_status->pre_time_utc, curr_time_utc, chip->charger_exist);
+			       track_status->pre_time_utc, curr_time_utc, (curr_local_time - pre_local_time),
+			       chip->charger_exist, avg_current, chip->icharging,
+			       track_status->pre_fcc, track_status->pre_rm, curr_fcc, curr_rm);
 		schedule_delayed_work(&g_track_chip->uisoc_trigger_work, 0);
 	} else {
 		if (track_status->uisoc_jumped && track_status->curr_uisoc == track_status->pre_uisoc)
@@ -5237,14 +5346,16 @@ static int oplus_chg_track_uisoc_soc_jump_check(struct oplus_chg_chip *chip)
 		memset(g_track_chip->uisoc_to_soc_trigger.crux_info, 0,
 		       sizeof(g_track_chip->uisoc_to_soc_trigger.crux_info));
 		ret = snprintf(g_track_chip->uisoc_to_soc_trigger.crux_info, OPLUS_CHG_TRACK_CURX_INFO_LEN,
-			       "$$curr_uisoc@@%d"
-			       "$$curr_soc@@%d$$curr_uisoc_curr_soc_gap@@%d"
+			       "$$curr_uisoc@@%d$$curr_soc@@%d$$curr_uisoc_curr_soc_gap@@%d"
 			       "$$pre_vbatt@@%d$$curr_vbatt@@%d"
-			       "$$pre_time_utc@@%d$$curr_time_utc@@%d"
-			       "$$charger_exist@@%d",
+			       "$$pre_time_utc@@%d$$curr_time_utc@@%d$$kernel_diff_t@@%d"
+			       "$$charger_exist@@%d$$curr_smooth_soc@@%d$$avg_current@@%d$$current@@%d"
+			       "$$pre_fcc@@%d$$pre_rm@@%d$$curr_fcc@@%d$$curr_rm@@%d",
 			       track_status->curr_uisoc, track_status->curr_soc,
-			       track_status->curr_uisoc - track_status->curr_soc, track_status->pre_vbatt, curr_vbatt,
-			       track_status->pre_time_utc, curr_time_utc, chip->charger_exist);
+			       track_status->curr_uisoc - judge_curr_soc, track_status->pre_vbatt, curr_vbatt,
+			       track_status->pre_time_utc, curr_time_utc, (curr_local_time - pre_local_time),
+			       chip->charger_exist, chip->smooth_soc, avg_current, chip->icharging,
+			       track_status->pre_fcc, track_status->pre_rm, curr_fcc, curr_rm);
 		schedule_delayed_work(&g_track_chip->uisoc_to_soc_trigger_work, 0);
 	} else {
 		if (track_status->curr_uisoc == judge_curr_soc) {
@@ -5253,7 +5364,7 @@ static int oplus_chg_track_uisoc_soc_jump_check(struct oplus_chg_chip *chip)
 		}
 	}
 
-	pr_info("debug_soc:0x%x, debug_uisoc:0x%x, pre_soc:%d, curr_soc:%d,\
+	pr_debug("debug_soc:0x%x, debug_uisoc:0x%x, pre_soc:%d, curr_soc:%d,\
 		pre_uisoc:%d, curr_uisoc:%d\n",
 		track_status->debug_soc, track_status->debug_uisoc, track_status->pre_soc, track_status->curr_soc,
 		track_status->pre_uisoc, track_status->curr_uisoc);
@@ -5262,6 +5373,9 @@ static int oplus_chg_track_uisoc_soc_jump_check(struct oplus_chg_chip *chip)
 	track_status->pre_uisoc = track_status->curr_uisoc;
 	track_status->pre_vbatt = curr_vbatt;
 	track_status->pre_time_utc = curr_time_utc;
+	track_status->pre_fcc = curr_fcc;
+	track_status->pre_rm = curr_rm;
+	pre_local_time = curr_local_time;
 
 	return ret;
 }
@@ -5419,7 +5533,7 @@ static int oplus_chg_track_driver_probe(struct platform_device *pdev)
 	}
 	INIT_DELAYED_WORK(&track_dev->upload_info_dwork, oplus_chg_track_upload_info_dwork);
 	g_track_chip = track_dev;
-	pr_info("probe done\n");
+	pr_debug("probe done\n");
 
 	return 0;
 

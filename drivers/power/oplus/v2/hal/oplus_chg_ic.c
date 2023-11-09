@@ -748,7 +748,7 @@ int oplus_chg_ic_clean_err_msg(struct oplus_chg_ic_dev *ic_dev,
 #ifdef CONFIG_OPLUS_CHG_IC_DEBUG
 const char *oplus_chg_ic_err_text(enum oplus_chg_ic_err err_type)
 {
-	return err_type_text[err_type];
+       return err_type_text[err_type];
 }
 #else
 const char *oplus_chg_ic_err_text(enum oplus_chg_ic_err err_type)
@@ -756,6 +756,7 @@ const char *oplus_chg_ic_err_text(enum oplus_chg_ic_err err_type)
   return "no debug";
 }
 #endif
+
 static struct oplus_chg_ic_dev *
 __oplus_chg_ic_register(struct device *dev, struct oplus_chg_ic_cfg *cfg)
 {
@@ -954,6 +955,7 @@ struct oplus_chg_ic_dev *devm_oplus_chg_ic_register(struct device *dev,
 
 	return ic_dev;
 }
+EXPORT_SYMBOL(devm_oplus_chg_ic_register);
 
 int devm_oplus_chg_ic_unregister(struct device *dev,
 				 struct oplus_chg_ic_dev *ic_dev)
@@ -974,6 +976,7 @@ int devm_oplus_chg_ic_unregister(struct device *dev,
 
 	return 0;
 }
+EXPORT_SYMBOL(devm_oplus_chg_ic_unregister);
 
 static __init int oplus_chg_ic_class_init(void)
 {

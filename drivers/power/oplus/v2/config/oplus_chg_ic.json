@@ -19,7 +19,9 @@
                 "OPLUS_CHG_IC_GAUGE",
                 "OPLUS_CHG_IC_VIRTUAL_GAUGE",
                 "OPLUS_CHG_IC_ASIC",
-                "OPLUS_CHG_IC_VIRTUAL_ASIC"
+                "OPLUS_CHG_IC_VIRTUAL_ASIC",
+		"OPLUS_CHG_IC_VPHY",
+		"OPLUS_CHG_IC_VIRTUAL_VPHY"
             ]
         },
         {
@@ -47,7 +49,8 @@
                 "OPLUS_IC_VIRQ_CURRENT_CHANGED",
                 "OPLUS_IC_VIRQ_BC12_COMPLETED",
                 "OPLUS_IC_VIRQ_DATA_ROLE_CHANGED",
-                "OPLUS_IC_VIRQ_ONLINE"
+                "OPLUS_IC_VIRQ_ONLINE",
+                "OPLUS_IC_VIRQ_TYPEC_STATE"
             ]
         },
         {

@@ -389,6 +389,7 @@ struct oplus_vooc_chip {
 	int bcc_soc_range;
 	int bcc_temp_range;
 	int bcc_curr_count;
+	bool fw_update_on_chargering_reboot;
 };
 
 struct oplus_vooc_cp {
@@ -470,6 +471,7 @@ void oplus_vooc_set_fastchg_dummy_started_false(void);
 int oplus_vooc_get_adapter_update_status(void);
 int oplus_vooc_get_adapter_update_real_status(void);
 bool oplus_vooc_get_btb_temp_over(void);
+void oplus_vooc_set_btb_temp_over(bool btb_temp_status);
 void oplus_vooc_reset_fastchg_after_usbout(void);
 void oplus_vooc_switch_fast_chg(void);
 void oplus_vooc_reset_mcu(void);

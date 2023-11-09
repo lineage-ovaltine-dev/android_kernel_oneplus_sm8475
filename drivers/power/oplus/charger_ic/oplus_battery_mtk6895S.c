@@ -4752,7 +4752,7 @@ void oplus_set_typec_sinkonly(void)
 {
 	if (pinfo != NULL && pinfo->tcpc != NULL) {
 		printk(KERN_ERR "[OPLUS_CHG][%s]: usbtemp occur otg switch[0]\n", __func__);
-		tcpm_typec_change_role(pinfo->tcpc, TYPEC_ROLE_SNK);
+		tcpm_typec_change_role_postpone(pinfo->tcpc, TYPEC_ROLE_SNK, true);
 	}
 };
 #endif /*OPLUS_FEATURE_CHG_BASIC*/
@@ -6580,7 +6580,7 @@ void oplus_set_otg_switch_status(bool value)
 			}
 		}
 
-		if (0 == tcpm_typec_change_role(pinfo->tcpc, value ? TYPEC_ROLE_TRY_SNK : TYPEC_ROLE_SNK)) {
+		if (0 == tcpm_typec_change_role_postpone(pinfo->tcpc, value ? TYPEC_ROLE_TRY_SNK : TYPEC_ROLE_SNK, true)) {
 			printk(KERN_ERR "[OPLUS_CHG][%s]: otg switch[%d] success\n", __func__, value);
 		} else {
 			printk(KERN_ERR "[OPLUS_CHG][%s]: otg switch[%d] failed.\n", __func__, value);
@@ -6648,8 +6648,8 @@ void oplus_ccdetect_enable(void)
 
 	/* set DRP mode */
 	if (pinfo != NULL && pinfo->tcpc != NULL){
-		tcpm_typec_change_role(pinfo->tcpc,TYPEC_ROLE_TRY_SNK);
-		pr_err("%s: set sink", __func__);
+		tcpm_typec_change_role_postpone(pinfo->tcpc, TYPEC_ROLE_TRY_SNK, true);
+		pr_err("%s: set drp\n", __func__);
 	}
 
 }
@@ -6669,8 +6669,8 @@ void oplus_ccdetect_disable(void)
 
 	/* set SINK mode */
 	if (pinfo != NULL && pinfo->tcpc != NULL){
-		tcpm_typec_change_role(pinfo->tcpc,TYPEC_ROLE_SNK);
-		pr_err("%s: set sink", __func__);
+		tcpm_typec_change_role_postpone(pinfo->tcpc, TYPEC_ROLE_SNK, true);
+		pr_err("%s: set sink\n", __func__);
 	}
 
 }
@@ -8648,6 +8648,5 @@ module_exit(mtk_charger_exit);
 oplus_chg_module_register(mtk_charger);
 #endif
 
-MODULE_AUTHOR("wy.chuang <wy.chuang@mediatek.com>");
 MODULE_DESCRIPTION("MTK Charger Driver");
 MODULE_LICENSE("GPL");

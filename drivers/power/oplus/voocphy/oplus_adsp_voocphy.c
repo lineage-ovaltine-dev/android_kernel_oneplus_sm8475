@@ -95,7 +95,7 @@ int __attribute__((weak)) oplus_adsp_reset_voocphy(void)
 
 int __attribute__((weak)) oplus_adsp_batt_curve_current(void)
 {
-	return -ENOMEM;
+	return 0;
 }
 
 static struct oplus_voocphy_operations oplus_adsp_voocphy_ops = {
@@ -231,6 +231,7 @@ void oplus_adsp_voocphy_handle_status(struct power_supply *psy, int intval)
 	if ((intval & 0xFF) == ADSP_VPHY_FAST_NOTIFY_PRESENT) {
 		chip->fastchg_start = true;
 		chip->fastchg_to_warm = false;
+		chip->adspvoocphy_fastchg_start = false;
 		chip->fastchg_dummy_start = false;
 		chip->fastchg_to_normal = false;
 		chip->fastchg_ing = false;
@@ -245,6 +246,7 @@ void oplus_adsp_voocphy_handle_status(struct power_supply *psy, int intval)
 	} else if ((intval & 0xFF) == ADSP_VPHY_FAST_NOTIFY_DUMMY_START) {
 		chip->fastchg_start = false;
 		chip->fastchg_to_warm = false;
+		chip->adspvoocphy_fastchg_start = false;
 		chip->fastchg_dummy_start = true;
 		chip->fastchg_to_normal = false;
 		chip->fastchg_ing = false;
@@ -271,6 +273,7 @@ void oplus_adsp_voocphy_handle_status(struct power_supply *psy, int intval)
 		|| (intval & 0xFF) == ADSP_VPHY_FAST_NOTIFY_BAD_CONNECTED) {
 		chip->fastchg_start = false;
 		chip->fastchg_to_warm = false;
+		chip->adspvoocphy_fastchg_start = false;
 		chip->fastchg_dummy_start = false;
 		chip->fastchg_to_normal = true;
 		chip->fastchg_ing = false;
@@ -292,6 +295,7 @@ void oplus_adsp_voocphy_handle_status(struct power_supply *psy, int intval)
 	} else if ((intval & 0xFF) == ADSP_VPHY_FAST_NOTIFY_BATT_TEMP_OVER) {
 		chip->fastchg_start = false;
 		chip->fastchg_to_warm = true;
+		chip->adspvoocphy_fastchg_start = false;
 		chip->fastchg_dummy_start = false;
 		chip->fastchg_to_normal = false;
 		chip->fastchg_ing = false;
@@ -303,6 +307,7 @@ void oplus_adsp_voocphy_handle_status(struct power_supply *psy, int intval)
 	} else if ((intval & 0xFF) == ADSP_VPHY_FAST_NOTIFY_ERR_COMMU) {
 		chip->fastchg_start = false;
 		chip->fastchg_to_warm = false;
+		chip->adspvoocphy_fastchg_start = false;
 		chip->fastchg_dummy_start = false;
 		chip->fastchg_to_normal = false;
 		chip->fastchg_ing = false;
@@ -313,19 +318,25 @@ void oplus_adsp_voocphy_handle_status(struct power_supply *psy, int intval)
 		oplus_chg_wake_update_work();
 		printk(KERN_ERR "!!![adsp_voocphy] fastchg err commu: [%d]\n", intval);
 	} else if ((intval & 0xFF) == ADSP_VPHY_FAST_NOTIFY_SWITCH_TEMP_RANGE) {
-		chip->fastchg_start = false;
-		chip->fastchg_to_warm = false;
-		chip->fastchg_dummy_start = true;
-		chip->fastchg_to_normal = false;
-		chip->fastchg_ing = false;
-		chip->btb_temp_over = false;
-		oplus_chg_unsuspend_charger();
-		oplus_chg_set_charger_type_unknown();
-		power_supply_changed(psy);
-		printk(KERN_ERR "!!![adsp_voocphy] fastchg switch temp range: [%d]\n", intval);
+		if (chip->fast_chg_type == FASTCHG_CHARGER_TYPE_UNKOWN) {
+			printk(KERN_ERR "!!![adsp_voocphy]fast_chg_type:%d error frame!!!: [%d]\n", chip->fast_chg_type, intval);
+		} else {
+			chip->fastchg_start = false;
+			chip->fastchg_to_warm = false;
+			chip->adspvoocphy_fastchg_start = false;
+			chip->fastchg_dummy_start = true;
+			chip->fastchg_to_normal = false;
+			chip->fastchg_ing = false;
+			chip->btb_temp_over = false;
+			oplus_chg_unsuspend_charger();
+			oplus_chg_set_charger_type_unknown();
+			power_supply_changed(psy);
+			printk(KERN_ERR "!!![adsp_voocphy] fastchg switch temp range: [%d]\n", intval);
+		}
 	} else if ((intval & 0xFF) == ADSP_VPHY_FAST_NOTIFY_COMMU_CLK_ERR) {
 		chip->fastchg_start = false;
 		chip->fastchg_to_warm = false;
+		chip->adspvoocphy_fastchg_start = false;
 		chip->fastchg_dummy_start = false;
 		chip->fastchg_to_normal = false;
 		chip->fastchg_ing = false;
@@ -338,6 +349,7 @@ void oplus_adsp_voocphy_handle_status(struct power_supply *psy, int intval)
 		|| (intval & 0xFF) == ADSP_VPHY_FAST_NOTIFY_HW_TBATT_HIGH) {
 		chip->fastchg_start = false;
 		chip->fastchg_to_warm = false;
+		chip->adspvoocphy_fastchg_start = false;
 		chip->fastchg_dummy_start = false;
 		chip->fastchg_to_normal = false;
 		chip->fastchg_ing = false;
@@ -348,20 +360,26 @@ void oplus_adsp_voocphy_handle_status(struct power_supply *psy, int intval)
 		oplus_chg_unsuspend_charger();
 		printk(KERN_ERR "!!![adsp_voocphy] fastchg hw vbatt || tbatt high: [%d]\n", intval);
 	} else if ((intval & 0xFF) == ADSP_VPHY_FAST_NOTIFY_COMMU_TIME_OUT) {
-		chip->fastchg_start = false;
-		chip->fastchg_to_warm = false;
-		chip->fastchg_dummy_start = false;
-		chip->fastchg_to_normal = false;
-		chip->fastchg_ing = false;
-		chip->btb_temp_over = false;
-		chip->fast_chg_type = 0;
-		oplus_chg_set_charger_type_unknown();
-		oplus_chg_unsuspend_charger();
-		oplus_chg_wake_update_work();
-		printk(KERN_ERR "!!![adsp_voocphy] fastchg timeout: [%d]\n", intval);
+		if (chip->fast_chg_type == FASTCHG_CHARGER_TYPE_UNKOWN) {
+			printk(KERN_ERR "!!![adsp_voocphy]fast_chg_type:%d error frame!!!: [%d]\n", chip->fast_chg_type, intval);
+		} else {
+			chip->fastchg_start = false;
+			chip->fastchg_to_warm = false;
+			chip->adspvoocphy_fastchg_start = false;
+			chip->fastchg_dummy_start = false;
+			chip->fastchg_to_normal = false;
+			chip->fastchg_ing = false;
+			chip->btb_temp_over = false;
+			chip->fast_chg_type = 0;
+			oplus_chg_set_charger_type_unknown();
+			oplus_chg_unsuspend_charger();
+			oplus_chg_wake_update_work();
+			printk(KERN_ERR "!!![adsp_voocphy] fastchg timeout: [%d]\n", intval);
+		}
 	} else {
 		chip->fastchg_start = false;
 		chip->fastchg_to_warm = false;
+		chip->adspvoocphy_fastchg_start = false;
 		chip->fastchg_dummy_start = false;
 		chip->fastchg_to_normal = false;
 		chip->fastchg_ing = false;

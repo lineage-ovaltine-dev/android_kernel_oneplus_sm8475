@@ -82,8 +82,66 @@
                 "write": false,
                 "overwrite": false
             }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_VOOCPHY_SET_PDQC_CONFIG",
+            "desc": {
+                "zh": "PD/QC适配器升压之前需要 OVP, OCP等"
+            },
+            "auto_debug_code": true,
+            "parameter_list": [],
+            "parameter_desc": [],
+            "vict": {
+                "read": false,
+                "write": false,
+                "overwrite": false
+            }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_VOOCPHY_GET_CP_VBAT",
+            "desc": {
+                "zh": "从CP测读取电池电压"
+            },
+            "auto_debug_code": true,
+            "parameter_list": ["int *"],
+            "parameter_desc": [
+                {
+                    "range": "0-*",
+                    "type": "out",
+                    "desc": {
+                        "zh": "电池电压"
+                    }
+                }
+            ],
+            "vict": {
+                "read": false,
+                "write": false,
+                "overwrite": false
+            }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_VOOCPHY_SET_CHG_AUTO_MODE",
+            "desc": {
+                "zh": "使能或关闭 auto mode"
+            },
+            "auto_debug_code": true,
+            "parameter_list": ["bool"],
+            "parameter_desc": [
+                {
+                    "range": "0-1",
+                    "type": "in",
+                    "desc": {
+                        "zh": "1: 使能, 0: 关闭"
+                    }
+                }
+            ],
+            "vict": {
+                "read": false,
+                "write": false,
+                "overwrite": false
+            }
         }
     ],
 
-    "version": "V1.0:4:f0cd4447285d13ab254bfd46109b0a982746b54f154062f8142b6f7ba3b57878"
+    "version": "V2.1:7:42427d68c80ed7fb33c1fe68f09ac2489bea83768dc0a59c73387b3824169f36"
 }

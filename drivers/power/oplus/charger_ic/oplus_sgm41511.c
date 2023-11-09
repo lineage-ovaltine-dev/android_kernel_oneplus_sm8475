@@ -333,10 +333,6 @@ int sgm41511_get_vbus_voltage(void)
 	return qpnp_get_prop_charger_voltage_now();
 }
 
-int sgm41511_get_ibus_current(void)
-{
-	return qpnp_get_prop_ibus_now();
-}
 #define AICL_DOWN_DELAY_MS	50
 #define AICL_DELAY_MIN_US	90000
 #define AICL_DELAY_MAX_US	91000
@@ -1052,6 +1048,15 @@ int sgm41511_check_charging_enable(void)
 	return charging_enable;
 }
 
+int sgm41511_get_ibus_current(void)
+{
+	if (sgm41511_check_charging_enable()) {
+		return qpnp_get_prop_ibus_now();
+	} else {
+		return 0;
+	}
+}
+
 int sgm41511_suspend_charger(void)
 {
 	struct chip_sgm41511 *chip = charger_ic;
@@ -1072,6 +1077,8 @@ int sgm41511_suspend_charger(void)
 int sgm41511_unsuspend_charger(void)
 {
 	struct chip_sgm41511 *chip = charger_ic;
+	struct oplus_chg_chip *ochip = g_oplus_chip;
+	int ret = 0;
 
 	if (!chip) {
 		return 0;
@@ -1091,7 +1098,14 @@ int sgm41511_unsuspend_charger(void)
 	} else {
 		sgm41511_input_current_limit_without_aicl(chip->before_suspend_icl);
 	}
-	return sgm41511_enable_charging();
+
+	if (ochip && ochip->is_double_charger_support) {
+		if (ochip->slave_charger_enable || ochip->em_mode)
+			ret = sgm41511_enable_charging();
+	} else {
+		ret = sgm41511_enable_charging();
+	}
+	return ret;
 }
 
 bool sgm41511_check_suspend_charger(void)

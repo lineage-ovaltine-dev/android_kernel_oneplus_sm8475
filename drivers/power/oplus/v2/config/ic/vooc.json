@@ -291,12 +291,12 @@
             }
         },
         {
-            "lable": "OPLUS_IC_FUNC_VOOC_READ_DATA_BIT",
+            "lable": "OPLUS_IC_FUNC_VOOC_READ_DATA",
             "desc": {
-                "zh": "获取mcu传递的1位data数据"
+                "zh": "获取mcu或voocphy传递的8位data数据"
             },
             "auto_debug_code": true,
-            "parameter_list": ["bool *"],
+            "parameter_list": ["int *"],
             "parameter_desc": [
                 {
                     "range": "0-1",
@@ -318,7 +318,7 @@
                 "zh": "向mcu回复数据"
             },
             "auto_debug_code": true,
-            "parameter_list": ["int", "int"],
+            "parameter_list": ["int", "int", "int"],
             "parameter_desc": [
                 {
                     "range": "*",
@@ -332,6 +332,13 @@
                     "type": "in",
                     "desc": {
                         "zh": "协议数据宽度"
+                    }
+                },
+                {
+                    "range": "*",
+                    "type": "in",
+                    "desc": {
+                        "zh": "灭屏温控电流值"
                     }
                 }
             ],
@@ -473,5 +480,5 @@
         }
     ],
 
-    "version": "V1.0:25:e162541184ad98b1f05a0de76329a054b3458954ead696f7bec17837b1f8b45c"
+    "version": "V2.0:25:f7ae03ab0b0c2f73bc18880e07ce53f9a25c5e08b3eb97ff36e8a3bb201e0cdc"
 }

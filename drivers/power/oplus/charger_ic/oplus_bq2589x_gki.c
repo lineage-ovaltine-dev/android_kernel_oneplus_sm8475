@@ -1455,13 +1455,15 @@ static irqreturn_t bq2589x_irq_handler(int irq, void *data)
 
 		/*step3: BC1.2*/
 		chg_debug("adapter/usb inserted. start bc1.2");
-		Charger_Detect_Init();
+		if (get_boot_mode() != META_BOOT)
+			Charger_Detect_Init();
 		if (bq->is_force_dpdm) {
 			bq->is_force_dpdm = false;
 			bq2589x_force_dpdm(bq, false);
 		} else {
 			bq2589x_disable_hvdcp(bq);
-			bq2589x_force_dpdm(bq, true);
+			if (get_boot_mode() != META_BOOT)
+				bq2589x_force_dpdm(bq, true);
 		}
 		bq2589x_enable_auto_dpdm(bq, false);
 
@@ -3526,25 +3528,28 @@ struct oplus_chg_operations  oplus_chg_bq2589x_ops = {
 static void retry_detection_work_callback(struct work_struct *work)
 {
 	static int bc12_retry = 0;
+
+	if (get_boot_mode() != META_BOOT) {
 RECHECK:
-	if (g_bq->sdp_retry || g_bq->cdp_retry || g_bq->retry_hvdcp_algo) {
-		Charger_Detect_Init();
-		chg_info("bc1.2 usb/cdp start bc1.2 once\n");
-		oplus_for_cdp();
-		if(bc12_retry > 0) {
-		    g_bq->usb_connect_start = true;
-		    g_bq->is_force_aicl = true;
-		    g_bq->is_retry_bc12 = true;
+		if (g_bq->sdp_retry || g_bq->cdp_retry || g_bq->retry_hvdcp_algo) {
+			Charger_Detect_Init();
+			chg_info("bc1.2 usb/cdp start bc1.2 once\n");
+			oplus_for_cdp();
+			if(bc12_retry > 0) {
+			    g_bq->usb_connect_start = true;
+			    g_bq->is_force_aicl = true;
+			    g_bq->is_retry_bc12 = true;
+			}
+			bq2589x_force_dpdm(g_bq, true);
 		}
-		bq2589x_force_dpdm(g_bq, true);
-	}
-	if(bc12_retry < 1) {
-		chg_info("bc1.2 usb/cdp start bc1.2 2nd\n");
-		msleep(200);
-		bc12_retry++;
-		goto RECHECK;
-	} else {
-		bc12_retry = 0;
+		if(bc12_retry < 1) {
+			chg_info("bc1.2 usb/cdp start bc1.2 2nd\n");
+			msleep(200);
+			bc12_retry++;
+			goto RECHECK;
+		} else {
+			bc12_retry = 0;
+		}
 	}
 }
 

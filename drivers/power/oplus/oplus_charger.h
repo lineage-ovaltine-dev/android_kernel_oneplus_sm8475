@@ -264,6 +264,8 @@ static inline void getnstimeofday(struct timespec *ts)
 
 #define OPCHG_PWROFF_HIGH_BATT_TEMP		770
 #define OPCHG_PWROFF_EMERGENCY_BATT_TEMP	850
+#define FACTORY_PWROFF_HIGH_BATT_TEMP		650
+#define FACTORY_PWROFF_EMERGENCY_BATT_TEMP	700
 
 #define OPCHG_INPUT_CURRENT_LIMIT_CHARGER_MA	2000
 #define OPCHG_INPUT_CURRENT_LIMIT_USB_MA	500
@@ -380,6 +382,9 @@ static inline void getnstimeofday(struct timespec *ts)
 
 #define OPLUS_PDQC_5VTO9V 1
 #define OPLUS_PDQC_9VTO5V 2
+#define chg_info(fmt, ...)                                                     \
+	printk(KERN_INFO "[OPLUS_CHG][%s]" fmt, __func__, ##__VA_ARGS__)
+
 #define chg_debug(fmt, ...)                                                    \
 	printk(KERN_NOTICE "[OPLUS_CHG][%s]" fmt, __func__, ##__VA_ARGS__)
 
@@ -434,6 +439,12 @@ typedef enum {
 	CHG_STOP_VOTER__VBAT_OVP = (1 << 5),
 	CHG_STOP_VOTER_BAD_VOL_DIFF = (1 << 6),
 } OPLUS_CHG_STOP_VOTER;
+
+typedef enum {
+	CHG_CYCLE_VOTER__NONE		= 0,
+	CHG_CYCLE_VOTER__ENGINEER	= (1 << 0),
+	CHG_CYCLE_VOTER__USER		= (1 << 1),
+}OPLUS_CHG_CYCLE_VOTER;
 
 typedef enum {
 	CHARGER_STATUS__GOOD,
@@ -923,7 +934,6 @@ struct oplus_chg_full_data {
 	int clear_full_check_count;
 };
 
-struct reserve_soc_data {
 #define SMOOTH_SOC_MAX_FIFO_LEN	4
 #define SMOOTH_SOC_MIN_FIFO_LEN	1
 #define RESERVE_SOC_MIN		1
@@ -931,20 +941,16 @@ struct reserve_soc_data {
 #define RESERVE_SOC_MAX		5
 #define RESERVE_SOC_OFF		0
 #define OPLUS_FULL_SOC		100
-#define OPLUS_FULL_CNT		36 /* 180S/5 */
-
+#define SOC_JUMP_RANGE_VAL	1
+struct reserve_soc_data {
 	bool smooth_switch_v2;
-	int reserve_chg_soc;
-	int reserve_dis_soc;
+	bool is_soc_jump_range;
 	int reserve_soc;
-	int rus_chg_soc;
-	int rus_dis_soc;
+	int rus_reserve_soc;
 
 	int smooth_soc_fifo[SMOOTH_SOC_MAX_FIFO_LEN];
 	int smooth_soc_index;
 	int smooth_soc_avg_cnt;
-	int soc_jump_array[RESERVE_SOC_MAX];
-	bool is_soc_jump_range;
 };
 
 typedef enum {
@@ -1063,6 +1069,7 @@ struct oplus_chg_chip {
 	int smooth_soc;
 	int smooth_switch;
 	int soc_load;
+	int shutdown_uisoc;
 	int ui_soc_decimal;
 	int ui_soc_integer;
 	int last_decimal_ui_soc;
@@ -1260,6 +1267,7 @@ struct oplus_chg_chip {
 	bool disable_ship_mode;
 	int ibat_save[10];
 	int pd_wait_svid;
+	unsigned long reset_mcu_jiffies;
 
 	int wls_status_keep;
 	int balancing_bat_stop_chg;
@@ -1352,6 +1360,7 @@ struct oplus_chg_chip {
 	bool support_wd0;
 
 	bool support_usbtemp_protect_v2;
+	bool usbtemp_change_across_unplug;
 	int usbtemp_curr_status;
 	int usbtemp_batt_current;
 	int usbtemp_pre_batt_current;
@@ -1388,13 +1397,18 @@ struct oplus_chg_chip {
 	int full_pre_ffc_mv;
 	bool boot_reset_adapter;
 #if IS_ENABLED(CONFIG_OPLUS_CHG_TEST_KIT)
-	struct test_feature *chg_gpio_test;
+	struct test_feature *chg_switch1_gpio_test;
+	struct test_feature *chg_switch2_gpio_test;
+	struct test_feature *chg_uart_gpio_test;
 	struct test_feature *typec_port_test;
 #endif
 	bool usbin_abnormal_status;
 	bool support_check_usbin_status;
 	int check_usbin_from_adsp_cnt;
 	int usb_present_vbus0_count;
+
+	int bms_heat_temp_compensation;
+	int chg_cycle_status;
 };
 
 #define SOFT_REST_VOL_THRESHOLD		4300
@@ -1630,6 +1644,7 @@ bool oplus_chg_get_rechging_status(void);
 
 bool oplus_chg_check_pd_disable(void);
 
+int oplus_chg_check_ui_soc(void);
 bool oplus_chg_check_chip_is_null(void);
 void oplus_chg_set_charger_type_unknown(void);
 int oplus_chg_get_charger_voltage(void);
@@ -1696,6 +1711,7 @@ bool oplus_get_flash_screen_ctrl(void);
 int set_soc_feature(void);
 bool oplus_chg_check_disable_charger(void);
 bool oplus_chg_is_wls_present(void);
+bool oplus_chg_is_wls_fastchg_started(void);
 struct oplus_chg_chip *oplus_chg_get_chg_struct(void);
 
 void oplus_chg_check_break(int vbus_rising);
@@ -1746,6 +1762,7 @@ int oplus_chg_otg_wait_vbus_decline(void);
 bool oplus_chg_get_wait_for_ffc_flag(void);
 void oplus_chg_set_wait_for_ffc_flag(bool wait_for_ffc);
 void oplus_chg_set_force_psy_changed(void);
+int oplus_chg_get_design_capacity(void);
 bool oplus_chg_get_bcc_support(void);
 void oplus_chg_check_bcc_curr_done(void);
 int oplus_chg_get_bcc_curr_done_status(void);

@@ -1618,11 +1618,22 @@ static int oplus_pps_set_current_temp_normal_range(struct oplus_pps_chip *chip,
 			chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_NORMAL_HIGH;
 			ret = chip->limits.pps_strategy_normal_current;
 		} else {
-			chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_NORMAL_LOW;
-			chip->pps_temp_cur_range = PPS_TEMP_RANGE_NORMAL_LOW;
-			ret = chip->limits.pps_strategy_normal_current;
-			oplus_pps_reset_temp_range(chip);
-			chip->limits.pps_normal_low_temp += PPS_TEMP_WARM_RANGE_THD;
+			chip->limits.pps_strategy_change_count++;
+			if (chip->limits.pps_strategy_change_count >= PPS_TEMP_OVER_COUNTS) {
+				chip->limits.pps_strategy_change_count = 0;
+				if (oplus_chg_get_ui_soc() <= chip->limits.pps_strategy_soc_high) {
+					chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_NORMAL_LOW;
+					chip->pps_temp_cur_range = PPS_TEMP_RANGE_INIT;
+					chip->pps_stop_status = PPS_STOP_VOTER_CHOOSE_CURVE;
+					pps_err(" switch temp range:%d", vbat_temp_cur);
+				} else {
+					chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_NORMAL_LOW;
+					chip->pps_temp_cur_range = PPS_TEMP_RANGE_NORMAL_LOW;
+				}
+				ret = chip->limits.pps_strategy_normal_current;
+				oplus_pps_reset_temp_range(chip);
+				chip->limits.pps_normal_low_temp += PPS_TEMP_LOW_RANGE_THD;
+			}
 		}
 		break;
 	case PPS_BAT_TEMP_HIGH0:
@@ -1744,13 +1755,36 @@ static int oplus_pps_set_current_temp_low_normal_range(struct oplus_pps_chip *ch
 		ret = chip->limits.pps_strategy_normal_current;
 	} else {
 		if (vbat_temp_cur >= chip->limits.pps_normal_low_temp) {
-			chip->limits.pps_normal_low_temp -= PPS_TEMP_LOW_RANGE_THD;
-			chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_NORMAL_HIGH;
-			ret = chip->limits.pps_strategy_normal_current;
-			chip->pps_temp_cur_range = PPS_TEMP_RANGE_NORMAL_HIGH;
+			chip->limits.pps_strategy_change_count++;
+			if (chip->limits.pps_strategy_change_count >= PPS_TEMP_OVER_COUNTS) {
+				chip->limits.pps_strategy_change_count = 0;
+				if (oplus_chg_get_ui_soc() <= chip->limits.pps_strategy_soc_high) {
+					chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_NORMAL_HIGH;
+					chip->pps_temp_cur_range = PPS_TEMP_RANGE_INIT;
+					chip->pps_stop_status = PPS_STOP_VOTER_CHOOSE_CURVE;
+					pps_err(" switch temp range:%d", vbat_temp_cur);
+				} else {
+					chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_NORMAL_HIGH;
+					chip->pps_temp_cur_range = PPS_TEMP_RANGE_NORMAL_HIGH;
+				}
+				ret = chip->limits.pps_strategy_normal_current;
+				oplus_pps_reset_temp_range(chip);
+				chip->limits.pps_normal_low_temp -= PPS_TEMP_LOW_RANGE_THD;
+			}
 		} else {
-			chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_LITTLE_COOL;
-			chip->pps_temp_cur_range = PPS_TEMP_RANGE_LITTLE_COOL;
+			if (oplus_chg_get_ui_soc() <= chip->limits.pps_strategy_soc_high) {
+				chip->limits.pps_strategy_change_count++;
+				if (chip->limits.pps_strategy_change_count >= PPS_TEMP_OVER_COUNTS) {
+					chip->limits.pps_strategy_change_count = 0;
+					chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_LITTLE_COOL;
+					chip->pps_temp_cur_range = PPS_TEMP_RANGE_INIT;
+					chip->pps_stop_status = PPS_STOP_VOTER_CHOOSE_CURVE;
+					pps_err(" switch temp range:%d", vbat_temp_cur);
+				}
+			} else {
+				chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_LITTLE_COOL;
+				chip->pps_temp_cur_range = PPS_TEMP_RANGE_LITTLE_COOL;
+			}
 			ret = chip->limits.pps_strategy_normal_current;
 			oplus_pps_reset_temp_range(chip);
 			chip->limits.pps_little_cool_temp += PPS_TEMP_LOW_RANGE_THD;
@@ -1771,10 +1805,22 @@ static int oplus_pps_set_current_temp_little_cool_range(struct oplus_pps_chip *c
 		ret = chip->limits.pps_strategy_normal_current;
 		chip->pps_temp_cur_range = PPS_TEMP_RANGE_LITTLE_COOL;
 	} else if (vbat_temp_cur >= chip->limits.pps_little_cool_temp) {
-		chip->limits.pps_little_cool_temp -= PPS_TEMP_LOW_RANGE_THD;
-		chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_NORMAL_LOW;
+		if (oplus_chg_get_ui_soc() <= chip->limits.pps_strategy_soc_high) {
+			chip->limits.pps_strategy_change_count++;
+			if (chip->limits.pps_strategy_change_count >= PPS_TEMP_OVER_COUNTS) {
+				chip->limits.pps_strategy_change_count = 0;
+				chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_NORMAL_LOW;
+				chip->pps_temp_cur_range = PPS_TEMP_RANGE_INIT;
+				chip->pps_stop_status = PPS_STOP_VOTER_CHOOSE_CURVE;
+				pps_err(" switch temp range:%d", vbat_temp_cur);
+			}
+		} else {
+			chip->pps_fastchg_batt_temp_status = PPS_BAT_TEMP_NORMAL_LOW;
+			chip->pps_temp_cur_range = PPS_TEMP_RANGE_NORMAL_LOW;
+		}
 		ret = chip->limits.pps_strategy_normal_current;
-		chip->pps_temp_cur_range = PPS_TEMP_RANGE_NORMAL_LOW;
+		oplus_pps_reset_temp_range(chip);
+		chip->limits.pps_little_cool_temp -= PPS_TEMP_LOW_RANGE_THD;
 	} else {
 		if (oplus_chg_get_ui_soc() <= chip->limits.pps_strategy_soc_high) {
 			chip->limits.pps_strategy_change_count++;
@@ -3076,6 +3122,8 @@ static void oplus_pps_master_enable_check(struct oplus_pps_chip *chip)
 static void oplus_pps_slave_enable_check(struct oplus_pps_chip *chip)
 {
 	int ret = 0, cnt_fail = 0;
+	if (!chip || !chip->ops || !chip->pps_support_type)
+		return;
 	if (oplus_pps_get_support_type() != PPS_SUPPORT_2CP &&
 	    oplus_pps_get_support_type() != PPS_SUPPORT_3CP)
 		return;
@@ -3166,9 +3214,22 @@ static void oplus_pps_slave_enable_check(struct oplus_pps_chip *chip)
 			chip->ilimit.cp_ibus_down = OPLUS_PPS_CURRENT_LIMIT_2A *
 					     oplus_pps_get_icurr_ratio();
 	}
+}
+
+static void oplus_pps_slave_disable_check(struct oplus_pps_chip *chip)
+{
+	if (!chip || !chip->ops || !chip->pps_support_type)
+		return;
+
+	if (oplus_pps_get_support_type() != PPS_SUPPORT_2CP &&
+	    oplus_pps_get_support_type() != PPS_SUPPORT_3CP)
+		return;
+	if (chip->pps_status <= OPLUS_PPS_STATUS_OPEN_MOS)
+		return;
 
 	if ((chip->cp.master_enable) && (chip->ask_charger_current <=
-	     (PPS_IBUS_SLAVE_DISABLE_MIN * oplus_pps_get_icurr_ratio()))) {
+	     (PPS_IBUS_SLAVE_DISABLE_MIN * oplus_pps_get_icurr_ratio())) &&
+	     (chip->data.ap_input_current <= (PPS_IBUS_SLAVE_DISABLE_MIN + PPS_IBUS_SLAVE_ENABLE_MIN))) {
 		oplus_pps_charging_enable_slave(chip, false);
 		oplus_pps_charging_enable_slave_b(chip, false);
 		chip->cp.slave_enable = false;
@@ -3365,6 +3426,10 @@ static int oplus_pps_action_status_start(struct oplus_pps_chip *chip)
 		} else {
 			vbus_err_times = 0;
 		}
+		if (chip->pps_adapter_type == PPS_ADAPTER_THIRD)
+			chip->pps_fastchg_started = false;
+		else
+			chip->pps_fastchg_started = true;
 	} else if (chip->data.ap_input_volt >
 		   (chip->target_charger_volt + OPLUS_PPS_VOLT_UPDATE_V1 +
 		    OPLUS_PPS_VOLT_UPDATE_V2)) {
@@ -3621,6 +3686,10 @@ static int oplus_pps_set_pdo(struct oplus_pps_chip *chip)
 			chip->pps_stop_status = PPS_STOP_VOTER_PDO_ERROR;
 			return -EINVAL;
 		}
+		pps_err(" ask_volt, ask_cur: %d, %d\n", chip->ask_charger_volt,
+		chip->ask_charger_current);
+
+		oplus_pps_slave_disable_check(chip);
 		chip->timer.set_pdo_flag = 0;
 	}
 
@@ -3630,9 +3699,6 @@ static int oplus_pps_set_pdo(struct oplus_pps_chip *chip)
 		/*chip->ops->pps_cp_pmid2vout_enable(true);*/
 		chip->cp.pmid2vout_enable = true;
 	}
-
-	pps_err(" ask_volt, ask_cur: %d, %d\n", chip->ask_charger_volt,
-		chip->ask_charger_current);
 
 	return ret;
 }
@@ -3997,8 +4063,6 @@ static void oplus_pps_stop_work(struct work_struct *work)
 	if (oplus_pps_get_chg_status() == PPS_CHARGE_END ||
 	    oplus_pps_get_chg_status() == PPS_NOT_SUPPORT) {
 		return;
-	} else {
-		oplus_pps_set_chg_status(PPS_CHARGE_END);
 	}
 	pps_err(" %d, %d\n", chip->pps_stop_status, chip->pps_adapter_type);
 	oplus_pps_cancel_update_work_sync();
@@ -4012,6 +4076,7 @@ static void oplus_pps_stop_work(struct work_struct *work)
 	oplus_pps_delay_exit();
 	oplus_pps_cp_reset();
 	oplus_pps_hardware_init();
+	oplus_pps_set_chg_status(PPS_CHARGE_END);
 
 	if (chip->pps_stop_status == PPS_STOP_VOTER_MMI_TEST) {
 		chip->pps_status = OPLUS_PPS_STATUS_START;
@@ -4347,6 +4412,10 @@ struct oplus_pps_chip *oplus_pps_get_pps_chip(void)
 	return &g_pps_chip;
 }
 
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+#include <oplus_pps_cfg.c>
+#endif
+
 int oplus_pps_init(struct oplus_chg_chip *g_chg_chip)
 {
 	struct oplus_pps_chip *chip = &g_pps_chip;
@@ -4372,6 +4441,9 @@ int oplus_pps_init(struct oplus_chg_chip *g_chg_chip)
 			  oplus_pps_ready_force2svooc_check_work);
 	oplus_pps_variables_reset(true);
 	oplus_pps_clear_dbg_info();
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+	(void)oplus_pps_reg_debug_config(chip);
+#endif
 	return 0;
 }
 

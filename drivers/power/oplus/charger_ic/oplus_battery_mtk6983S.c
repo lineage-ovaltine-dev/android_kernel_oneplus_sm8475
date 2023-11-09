@@ -98,6 +98,9 @@
 #include <linux/rtc.h>
 #include <linux/thermal.h>
 #include "charger_ic/oplus_switching.h"
+#ifdef CONFIG_OPLUS_CHARGER_OPTIGA
+#include "../gauge_ic/oplus_optiga/oplus_optiga.h"
+#endif
 
 struct oplus_chg_chip *g_oplus_chip = NULL;
 static struct mtk_charger *pinfo;
@@ -1212,6 +1215,10 @@ static void mtk_charger_parse_dt(struct mtk_charger *info,
 		info->data.max_dmivr_charger_current =
 					MAX_DMIVR_CHARGER_CURRENT;
 	}
+
+	/* ntc_resistance:100k internal_pull_up:100k voltage:1.84v */
+	info->ntc_temp_volt_1840mv = of_property_read_bool(np, "qcom,ntc_temp_volt_1840mv");
+
 	/* fast charging algo support indicator */
 	info->enable_fast_charging_indicator =
 			of_property_read_bool(np, "enable_fast_charging_indicator");
@@ -3861,6 +3868,7 @@ static void mtk_charger_external_power_changed(struct power_supply *psy)
 #ifdef OPLUS_FEATURE_CHG_BASIC
 	if (!prop.intval) {
 		oplus_chg_global_event(chip->chgic_mtk.oplus_info->usb_ocm, OPLUS_CHG_EVENT_OFFLINE);
+		oplus_chg_set_charger_type_unknown();
 		if (oplus_vooc_get_fastchg_started() == false) {
 			oplus_vooc_reset_fastchg_after_usbout();
 			oplus_chg_set_chargerid_switch_val(0);
@@ -4006,6 +4014,7 @@ int chg_alg_event(struct notifier_block *notifier,
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
 #define OPLUS_SVID 0x22D9
+#define SVID_NONE 0x0
 uint32_t pd_svooc_abnormal_adapter[] = {
 	0x20002,
 	0x10002,
@@ -4022,7 +4031,7 @@ int oplus_get_adapter_svid(void)
 
 	if (tcpc_dev == NULL || !g_oplus_chip) {
 		chg_err("tcpc_dev is null return\n");
-		return -1;
+		return -ENODEV;
 	}
 
 	tcpm_inquire_pd_partner_svids(tcpc_dev, &svid_list);
@@ -4046,9 +4055,9 @@ int oplus_get_adapter_svid(void)
 				break;
 			}
 		}
-	}
-
-	return 0;
+		return OPLUS_SVID;
+	} else
+		return SVID_NONE;
 }
 
 bool oplus_check_pdphy_ready(void)
@@ -4142,6 +4151,7 @@ static int pd_tcp_notifier_call(struct notifier_block *pnb,
 	union oplus_chg_mod_propval temp_val = {0, };
 	static struct charger_device *primary_charger = NULL;
 	static bool otg_flag = 0;
+	int svid = 0;
 
 	if (!primary_charger) {
 		primary_charger = get_charger_by_name("primary_chg");
@@ -4200,7 +4210,6 @@ static int pd_tcp_notifier_call(struct notifier_block *pnb,
 		switch (noti->pd_state.connected) {
 		case  PD_CONNECT_NONE:
 			pinfo->pd_type = MTK_PD_CONNECT_NONE;
-			g_oplus_chip->pd_svooc = false;
 			chr_err("PD Notify Detach\n");
 			break;
 
@@ -4212,19 +4221,25 @@ static int pd_tcp_notifier_call(struct notifier_block *pnb,
 		case PD_CONNECT_PE_READY_SNK:
 			pinfo->pd_type = MTK_PD_CONNECT_PE_READY_SNK;
 			chr_err("PD Notify fixe voltage ready\n");
-			oplus_get_adapter_svid();
+			svid = oplus_get_adapter_svid();
+			if (svid == SVID_NONE)
+				g_oplus_chip->pd_svooc = false;
 			break;
 
 		case PD_CONNECT_PE_READY_SNK_PD30:
 			pinfo->pd_type = MTK_PD_CONNECT_PE_READY_SNK_PD30;
 			chr_err("PD Notify PD30 ready\r\n");
-			oplus_get_adapter_svid();
+			svid = oplus_get_adapter_svid();
+			if (svid == SVID_NONE)
+				g_oplus_chip->pd_svooc = false;
 			break;
 
 		case PD_CONNECT_PE_READY_SNK_APDO:
 			pinfo->pd_type = MTK_PD_CONNECT_PE_READY_SNK_APDO;
 			chr_err("PD Notify APDO Ready\n");
-			oplus_get_adapter_svid();
+			svid = oplus_get_adapter_svid();
+			if (svid == SVID_NONE)
+				g_oplus_chip->pd_svooc = false;
 			oplus_chg_pps_get_source_cap(pinfo);
 			break;
 
@@ -5128,6 +5143,31 @@ static struct ntc_temp *init_ntc_param(char *str)
 
 	return ntc_param;
 }
+/* ntc_resistance:100k internal_pull_up:100k voltage:1.84v */
+int con_temp_ntc_100k_1840mv[] = {
+	-40, -39, -38, -37, -36, -35, -34, -33, -32, -31, -30, -29, -28, -27, -26, -25, -24, -23, -22,
+	-21, -20, -19, -18, -17, -16, -15, -14, -13, -12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1,
+	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+	26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+	50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
+	74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
+	98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116,
+	117, 118, 119, 120, 121, 122, 123, 124, 125
+};
+
+int con_volt_ntc_100k_1840mv[] = {
+	1799, 1796, 1793, 1790, 1786, 1782, 1778, 1774, 1770, 1765, 1760, 1755, 1749, 1743, 1737, 1731,
+	1724, 1717, 1709, 1701, 1693, 1684, 1675, 1666, 1656, 1646, 1635, 1624, 1612, 1600, 1588, 1575,
+	1561, 1547, 1533, 1518, 1503, 1478, 1471, 1454, 1437, 1420, 1402, 1384, 1365, 1346, 1327, 1307,
+	1287, 1267, 1246, 1225, 1204, 1183, 1161, 1139, 1118, 1096, 1074, 1052, 1030, 1008, 986, 964,
+	942, 920, 898, 877, 855, 834, 813, 793, 772, 752, 732, 712, 693, 674, 655, 637, 619, 601, 584,
+	567, 550, 534, 518, 503, 488, 473, 459, 445, 431, 418, 405, 392, 380, 368, 357, 345, 335, 324,
+	314, 304, 294, 285, 276, 267, 259, 251, 243, 235, 227, 220, 213, 206, 200, 194, 187, 182, 176,
+	170, 165, 160, 155, 150, 145, 140, 136, 132, 128, 124, 120, 117, 113, 110, 106, 103, 100, 97,
+	94, 91, 88, 86, 83, 81, 78, 76, 74, 72, 70, 68, 66, 64, 62, 60, 58, 57, 55, 54, 52, 51, 49, 48,
+	47, 45
+};
+/* ntc_resistance:100k internal_pull_up:100k voltage:1.84v */
 
 static __s16 oplus_thermistor_conver_temp(__s32 res, struct ntc_temp *ntc_param)
 {
@@ -5279,7 +5319,7 @@ static int oplus_chg_get_main_battery_btb(void)
 		}
 	}
 
-	if (pinfo->batcon_temp_chan) {
+	if (!IS_ERR_OR_NULL(pinfo->batcon_temp_chan)) {
 		temp = oplus_get_ntc_temp(pinfo->batcon_temp_chan, pinfo->batt_ntc_param);
 		return temp;
 	}
@@ -5304,7 +5344,7 @@ static int oplus_chg_get_sub_battery_btb(void)
 		}
 	}
 
-	if (pinfo->sub_batcon_temp_chan) {
+	if (!IS_ERR_OR_NULL(pinfo->sub_batcon_temp_chan)) {
 		sub_temp = oplus_get_ntc_temp(pinfo->sub_batcon_temp_chan, pinfo->sub_batt_ntc_param);
 		return sub_temp;
 	}
@@ -5383,7 +5423,7 @@ int oplus_force_get_subboard_temp(void)
 			ntc_param.i_rap_pull_up_voltage, ntc_param.i_tap_min, ntc_param.i_tap_max, ntc_param.i_table_size);
 	}
 
-	rc = iio_read_channel_processed(pinfo->batcon_temp_chan, &ntc_temp_volt);
+	rc = iio_read_channel_processed(pinfo->subboard_temp_chan, &ntc_temp_volt);
 	if (rc < 0) {
 		chg_err("%s read ntc_temp_chan volt failed, rc=%d\n", __func__, rc);
 		ntc_temp_volt = ntc_param.i_25c_volt;
@@ -9087,6 +9127,12 @@ static int mtk_charger_probe(struct platform_device *pdev)
 		pinfo->sub_batcon_temp_chan = NULL;
 	}
 
+	pinfo->subboard_temp_chan = devm_iio_channel_get(oplus_chip->dev, "subboard_temp");
+	if (IS_ERR(pinfo->subboard_temp_chan)) {
+		chg_err("Couldn't get subboard_temp_chan...\n");
+		pinfo->subboard_temp_chan = NULL;
+	}
+
 	pinfo->batt_ntc_param = init_ntc_param("batt_ntc_param");
 	pinfo->sub_batt_ntc_param = init_ntc_param("sub_batt_ntc_param");
 	pinfo->usb_ntc_param = init_ntc_param("usb_ntc_param");
@@ -9118,9 +9164,16 @@ static int mtk_charger_probe(struct platform_device *pdev)
 		}
 	}
 
-	oplus_chip->con_volt = con_volt_20131;
-	oplus_chip->con_temp = con_temp_20131;
-	oplus_chip->len_array = ARRAY_SIZE(con_temp_20131);
+	if (info->ntc_temp_volt_1840mv) {
+		oplus_chip->con_volt = con_volt_ntc_100k_1840mv;
+		oplus_chip->con_temp = con_temp_ntc_100k_1840mv;
+		oplus_chip->len_array = ARRAY_SIZE(con_temp_ntc_100k_1840mv);
+	} else {
+		oplus_chip->con_volt = con_volt_20131;
+		oplus_chip->con_temp = con_temp_20131;
+		oplus_chip->len_array = ARRAY_SIZE(con_temp_20131);
+	}
+
 	if (oplus_usbtemp_check_is_support() == true)
 		oplus_usbtemp_thread_init();
 
@@ -9329,6 +9382,9 @@ static int __init mtk_charger_init(void)
 	sc8547_subsys_init();
 	sc8547_slave_subsys_init();
 	p9418_driver_init();
+#ifdef CONFIG_OPLUS_CHARGER_OPTIGA
+	oplus_optiga_driver_init();
+#endif
 #endif
 	return platform_driver_register(&mtk_charger_driver);
 }
@@ -9341,6 +9397,9 @@ static void __exit mtk_charger_exit(void)
 	platform_driver_unregister(&mtk_charger_driver);
 #ifdef OPLUS_FEATURE_CHG_BASIC
 	oplus_chg_ops_deinit();
+#ifdef CONFIG_OPLUS_CHARGER_OPTIGA
+	oplus_optiga_driver_exit();
+#endif
 #endif
 	sc8547_subsys_exit();
 	sc8547_slave_subsys_exit();
@@ -9354,6 +9413,5 @@ module_exit(mtk_charger_exit);
 oplus_chg_module_register(mtk_charger);
 #endif
 
-MODULE_AUTHOR("wy.chuang <wy.chuang@mediatek.com>");
 MODULE_DESCRIPTION("MTK Charger Driver");
 MODULE_LICENSE("GPL");

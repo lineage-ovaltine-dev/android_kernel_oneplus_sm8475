@@ -16,6 +16,9 @@
 #include <linux/random.h>
 #include <linux/device.h>
 #include <linux/types.h>
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+#include <oplus_cfg.h>
+#endif
 #define pps_err(fmt, ...)                                                      \
 	printk(KERN_ERR "[OPLUS_PPS][%s]" fmt, __func__, ##__VA_ARGS__)
 
@@ -530,6 +533,10 @@ struct oplus_pps_chip {
 	struct delayed_work update_pps_work;
 	struct delayed_work check_vbat_diff_work;
 	struct delayed_work ready_force2svooc_work;
+
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+	struct oplus_cfg debug_cfg;
+#endif
 
 	/*curve data*/
 	struct batt_curves_soc
