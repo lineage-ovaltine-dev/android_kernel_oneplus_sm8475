@@ -386,10 +386,8 @@ static void clear_eps(struct usb_function *f)
 	if (qdss->port.ctrl_out)
 		qdss->port.ctrl_out->driver_data = NULL;
 	if (qdss->port.data) {
-		if (!strcmp(qdss->ch.name, USB_QDSS_CH_MSM)) {
-			msm_ep_clear_ops(qdss->port.data);
-			msm_ep_set_mode(qdss->port.data, USB_EP_NONE);
-		}
+		msm_ep_clear_ops(qdss->port.data);
+		msm_ep_set_mode(qdss->port.data, USB_EP_NONE);
 		qdss->port.data->driver_data = NULL;
 	}
 }
