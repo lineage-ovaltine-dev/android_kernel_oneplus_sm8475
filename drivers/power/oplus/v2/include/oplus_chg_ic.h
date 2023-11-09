@@ -7,7 +7,7 @@
 #define __OPLUS_CHG_IC_H__
 
 #include <linux/cdev.h>
-#include <oplus_chg.h>
+#include "oplus_chg.h"
 
 #define OPLUS_CHG_IC_INIT_RETRY_DELAY	100
 #define OPLUS_CHG_IC_INIT_RETRY_MAX	1000

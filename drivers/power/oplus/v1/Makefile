@@ -9,6 +9,7 @@ endif
 subdir-ccflags-y += -I$(srctree)/$(src)
 subdir-ccflags-y += -Werror=parentheses
 subdir-ccflags-y += -DOPLUS_CHG_KO_BUILD
+ccflags-$(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER) += -I$(srctree)/drivers/power/oplus/config
 
 ifdef gki_support
 
@@ -53,6 +54,7 @@ oplus_chg-y += oplus_pps_ops_manager.o
 oplus_chg-y += adapter_ic/oplus_stm.o
 oplus_chg-y += charger_ic/oplus_short_ic.o
 oplus_chg-y += gauge_ic/oplus_bq27541.o
+oplus_chg-y += gauge_ic/oplus_sh366002.o
 ifeq ($(CONFIG_OPLUS_SM6375R_CHARGER),y)
 oplus_chg-y += gauge_ic/oplus_sm5602.o
 endif
@@ -88,6 +90,8 @@ oplus_chg-y += oplus_chg_comm.o
 oplus_chg-y += oplus_chg_track.o
 oplus_chg-y += ufcs_ic/oplus_sc8547a.o
 oplus_chg-y += oplus_ufcs.o
+oplus_chg-$(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER) += op_wlchg_v2/oplus_chg_wls_cfg.o
+
 oplus_chg-$(CONFIG_OPLUS_SM8350_CHARGER) += charger_ic/oplus_battery_sm8350.o charger_ic/oplus_da9313.o charger_ic/oplus_mp2650.o voocphy/oplus_adsp_voocphy.o voocphy/oplus_voocphy.o wireless_ic/oplus_p922x.o
 oplus_chg-$(CONFIG_OPLUS_SM8450_CHARGER) += charger_ic/oplus_battery_sm8450.o charger_ic/oplus_da9313.o charger_ic/oplus_mp2650.o voocphy/oplus_adsp_voocphy.o voocphy/oplus_voocphy.o wireless_ic/oplus_p922x.o \
 		charger_ic/oplus_hl7227.o \
@@ -202,8 +206,6 @@ oplus_chg-$(CONFIG_OPLUS_CHARGER_MTK6985S) += \
 		op_wlchg_v2/oplus_chg_wls.o \
 		voocphy/oplus_voocphy.o \
 		charger_ic/oplus_battery_mtk6985S.o
-
-oplus_chg-$(CONFIG_OPLUS_CHG_DYNAMIC_CONFIG) += op_wlchg_v2/oplus_chg_cfg.o
 
 ccflags-y += -DOPLUS_CHG_REG_DUMP_ENABLE
 

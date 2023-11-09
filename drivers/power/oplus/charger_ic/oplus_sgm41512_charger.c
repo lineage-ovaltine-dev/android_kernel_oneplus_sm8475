@@ -1462,8 +1462,6 @@ enum charger_type mt_charger_type_detection_sgm41512(void)
 	int val_buf = 0;
 	int count = 0;
 	int i = 0;
-	int retry_times = BC12_RETRY_TIMES;
-	int unknown_type_flag = 0;
 	if (!charger_ic) {
 		pr_err("%s charger_ic null, return\n", __func__);
 		return CHARGER_UNKNOWN;
@@ -1517,16 +1515,9 @@ enum charger_type mt_charger_type_detection_sgm41512(void)
 		MTK_CHR_Type_num = CHARGER_UNKNOWN;
 	}
 
-	if (MTK_CHR_Type_num == CHARGER_UNKNOWN) {
-		unknown_type_flag = 1;
-	}
 	/* the 2-3nd detection */
-	for (i = 0; i < retry_times; i++) {
+	for (i = 0; i < BC12_RETRY_TIMES; i++) {
 		if (((MTK_CHR_Type_num == CHARGER_UNKNOWN) || (MTK_CHR_Type_num == STANDARD_HOST)) && charger_ic->pwr_gd) {
-			if (unknown_type_flag == 1 && MTK_CHR_Type_num == STANDARD_HOST) {
-				retry_times++;
-				unknown_type_flag = 0;
-			}
 			pr_err("mt_charger_type_detection: %dnd...\n", i + 2);
 			sgm41512_config_interface(charger_ic, REG07_SGM41512_ADDRESS,
 					REG07_SGM41512_IINDET_EN_FORCE_DET, REG07_SGM41512_IINDET_EN_MASE);

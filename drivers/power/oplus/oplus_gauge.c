@@ -63,6 +63,10 @@ int oplus_gauge_get_plat_batt_mvolts(void)
 	if (!g_plat_gauge_ops) {
 		return 0;
 	} else {
+		if (gauge_dbg_vbat != 0) {
+			chg_err("[OPLUS_CHG]%s:debug enabled,voltage gauge_dbg_vbat[%d]\n", __func__, gauge_dbg_vbat);
+			return gauge_dbg_vbat;
+		}
 		return g_plat_gauge_ops->get_plat_battery_mvolts();
 	}
 	return 0;

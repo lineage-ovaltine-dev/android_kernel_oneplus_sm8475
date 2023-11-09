@@ -1376,8 +1376,44 @@
                 "write": false,
                 "overwrite": false
             }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_GAUGE_SET_BATTERY_CURVE",
+            "desc": {
+                "zh": "mtk平台电量计需要根据不同类型适配器设置电池曲线"
+            },
+            "auto_debug_code": true,
+            "parameter_list": ["int", "int", "bool"],
+            "parameter_desc": [
+                {
+                    "range": "0-4",
+                    "type": "int",
+                    "desc": {
+                        "zh": "charger subtype"
+                    }
+                },
+                {
+                    "range": "*",
+                    "type": "int",
+                    "desc": {
+                        "zh": "adapter id"
+                    }
+                },
+                {
+                    "range": "0-1",
+                    "type": "int",
+                    "desc": {
+                        "zh": "是否为PD_SVOOC适配器"
+                    }
+                }
+            ],
+            "vict": {
+                "read": false,
+                "write": false,
+                "overwrite": false
+            }
         }
     ],
 
-    "version": "V1.0:47:84847f457172a27c292f8fbb89d2b176f56d7aeb282e34f31ebe2cdad3f96628"
+    "version": "V1.1:48:0b6fcb0169b4ede487dba3da9c943b789439af35d882d81c20a4448e0ff5f69f"
 }

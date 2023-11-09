@@ -97,6 +97,7 @@ struct oplus_chg_wired {
 	struct votable *output_suspend_votable;
 	struct votable *pd_svooc_votable;
 	struct votable *pd_boost_disable_votable;
+	struct votable *vooc_chg_auto_mode_votable;
 
 	struct completion qc_action_ack;
 	struct completion pd_action_ack;
@@ -110,6 +111,7 @@ struct oplus_chg_wired {
 
 	bool chg_online;
 	bool vooc_support;
+	bool adjust_pdqc_vol_thr_support;
 	bool authenticate;
 	bool hmac;
 	bool vooc_started;
@@ -212,6 +214,15 @@ is_pd_svooc_votable_available(struct oplus_chg_wired *chip)
 	if (!chip->pd_svooc_votable)
 		chip->pd_svooc_votable = find_votable("PD_SVOOC");
 	return !!chip->pd_svooc_votable;
+}
+
+__maybe_unused static bool
+is_vooc_chg_auto_mode_votable_available(struct oplus_chg_wired *chip)
+{
+	if (!chip->vooc_chg_auto_mode_votable)
+		chip->vooc_chg_auto_mode_votable =
+			find_votable("VOOC_CHG_AUTO_MODE");
+	return !!chip->vooc_chg_auto_mode_votable;
 }
 
 const char *oplus_wired_get_chg_type_str(enum oplus_chg_usb_type type)
@@ -492,12 +503,15 @@ static int oplus_wired_current_set(struct oplus_chg_wired *chip,
 	else
 		vote(chip->icl_votable, COOL_DOWN_VOTER, false, 0, true);
 
-	if (led_on)
-		vote(chip->fcc_votable, LED_ON_VOTER, true,
-		     spec->led_on_fcc_max_ma[chip->temp_region], false);
-	else
+	if (led_on) {
+		if (chip->chg_type == OPLUS_CHG_USB_TYPE_VOOC)
+			vote(chip->fcc_votable, LED_ON_VOTER, false, 0, false);
+		else
+			vote(chip->fcc_votable, LED_ON_VOTER, true,
+			     spec->led_on_fcc_max_ma[chip->temp_region], false);
+	} else {
 		vote(chip->fcc_votable, LED_ON_VOTER, false, 0, false);
-
+	}
 	icl_changed = (icl_tmp_ma != get_effective_result(chip->icl_votable));
 	chg_info("vbus_changed=%s, icl_changed=%s\n",
 		 true_or_false_str(vbus_changed),
@@ -1251,9 +1265,15 @@ static void oplus_wired_comm_subs_callback(struct mms_subscribe *subs,
 			oplus_mms_get_item_data(chip->comm_topic, id, &data,
 						false);
 			if (!!data.intval && spec->vbatt_pdqc_to_9v_thr > 0) {
-				spec->vbatt_pdqc_to_9v_thr =
-					FACTORY_MODE_PDQC_9V_THR;
-				schedule_work(&chip->chg_type_change_work);
+				if (oplus_gauge_get_batt_num() == 2) {
+					if (chip->adjust_pdqc_vol_thr_support)
+						spec->vbatt_pdqc_to_9v_thr =
+							FACTORY_MODE_PDQC_9V_THR;
+					else
+						spec->vbatt_pdqc_to_9v_thr =
+							oplus_wired_get_vbatt_pdqc_to_9v_thr(chip);
+					schedule_work(&chip->chg_type_change_work);
+				}
 			} else {
 				spec->vbatt_pdqc_to_9v_thr =
 					oplus_wired_get_vbatt_pdqc_to_9v_thr(
@@ -1423,6 +1443,13 @@ static int oplus_wired_input_suspend_vote_callback(struct votable *votable,
 	chg_info("charger suspend change to %s by %s\n",
 		 disable ? "true" : "false", client);
 	rc = oplus_wired_input_enable(!disable);
+	if (chip->chg_online) {
+		if (is_vooc_chg_auto_mode_votable_available(chip))
+			vote(chip->vooc_chg_auto_mode_votable,
+			     CHARGE_SUSPEND_VOTER, disable, disable, false);
+		else
+			chg_err("vooc_chg_auto_mode_votable not found\n");
+	}
 
 	/* Restore current setting */
 	if (!disable && suspend) {
@@ -1451,6 +1478,13 @@ static int oplus_wired_output_suspend_vote_callback(struct votable *votable,
 	chg_info("charging disabled change to %s by %s\n",
 		 disable ? "true" : "false", client);
 	rc = oplus_wired_output_enable(!disable);
+	if (chip->chg_online) {
+		if (is_vooc_chg_auto_mode_votable_available(chip))
+			vote(chip->vooc_chg_auto_mode_votable,
+			     CHAEGE_DISABLE_VOTER, disable, disable, false);
+		else
+			chg_err("vooc_chg_auto_mode_votable not found\n");
+	}
 
 	/* Restore current setting */
 	if (!disable && suspend) {
@@ -1556,6 +1590,8 @@ static int oplus_wired_parse_dt(struct oplus_chg_wired *chip)
 	int rc;
 
 	chip->vooc_support = of_property_read_bool(node, "oplus,vooc-support");
+	chip->adjust_pdqc_vol_thr_support = of_property_read_bool(node,
+						"oplus,adjust-pdqc-vol-thr-support");
 
 	rc = of_property_read_u32(node, "oplus_spec,pd-iclmax-ma",
 				  &spec->pd_iclmax_ma);
@@ -1888,14 +1924,3 @@ static __exit void oplus_wired_exit(void)
 }
 
 oplus_chg_module_register(oplus_wired);
-
-/* wired API */
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-
-int oplus_wired_set_config(struct oplus_mms *topic,
-			   struct oplus_chg_param_head *param_head)
-{
-	return 0;
-}
-
-#endif /* CONFIG_OPLUS_CHG_DYNAMIC_CONFIG */

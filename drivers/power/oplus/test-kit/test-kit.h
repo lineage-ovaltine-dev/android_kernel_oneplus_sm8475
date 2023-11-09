@@ -8,9 +8,6 @@
 
 #include <linux/list.h>
 #include <linux/gpio.h>
-#if IS_ENABLED(CONFIG_TCPC_CLASS)
-#include "tcpm.h"
-#endif
 
 struct test_feature;
 
@@ -40,9 +37,6 @@ struct test_kit_typec_port_info {
 	int case_num;
 	int status;
 	int situation;
-#if IS_ENABLED(CONFIG_TCPC_CLASS)
-	struct tcpc_device *dev;
-#endif
 };
 
 struct test_kit_soc_gpio_info {

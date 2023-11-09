@@ -1440,7 +1440,10 @@ static void oplus_check_charger_out_func(struct work_struct *work)
 	pst_batt = &bcdev->psy_list[PSY_TYPE_BATTERY];
 
 	chg_vol = oplus_chg_get_charger_voltage();
+
 	if (chg_vol >= 0 && chg_vol < 2000) {
+		if (oplus_voocphy_get_bidirect_cp_support() && oplus_vooc_get_fastchg_started())
+			oplus_voocphy_chg_out_check_event_handle(true);
 		oplus_adsp_voocphy_clear_status();
 		oplus_chg_clear_abnormal_adapter_var();
 		if (pst_batt->psy)
@@ -1914,14 +1917,14 @@ static void battery_chg_update_usb_type_work(struct work_struct *work)
 #ifdef OPLUS_FEATURE_CHG_BASIC
 	if (g_oplus_chip) {
 		if (usb_psy_desc.type != POWER_SUPPLY_TYPE_UNKNOWN) {
-			if (g_oplus_chip->charger_type == POWER_SUPPLY_TYPE_USB_DCP
+			if (chg_type == POWER_SUPPLY_TYPE_USB_DCP
 				&& pst->prop[USB_ADAP_TYPE] != POWER_SUPPLY_USB_TYPE_DCP
 				&& bcdev->hvdcp_disable == false) {
 				usb_psy_desc.type = POWER_SUPPLY_TYPE_USB_DCP;
-			} else if (g_oplus_chip->charger_type == POWER_SUPPLY_TYPE_USB
+			} else if (chg_type == POWER_SUPPLY_TYPE_USB
 				&& pst->prop[USB_ADAP_TYPE] != POWER_SUPPLY_USB_TYPE_SDP) {
 				usb_psy_desc.type = POWER_SUPPLY_TYPE_USB;
-			} else if (g_oplus_chip->charger_type == POWER_SUPPLY_TYPE_USB_CDP
+			} else if (chg_type == POWER_SUPPLY_TYPE_USB_CDP
 				&& pst->prop[USB_ADAP_TYPE] != POWER_SUPPLY_USB_TYPE_CDP) {
 				usb_psy_desc.type = POWER_SUPPLY_TYPE_USB_CDP;
 			}
@@ -2031,6 +2034,7 @@ static void handle_notification(struct battery_chg_dev *bcdev, void *data,
 	case BC_VOOC_VBUS_ADC_ENABLE:
 		printk(KERN_ERR "!!!!!vooc_vbus_adc_enable\n");
 		bcdev->adsp_voocphy_err_check = true;
+		oplus_adsp_voocphy_set_fastchg_start(true);
 		cancel_delayed_work_sync(&bcdev->adsp_voocphy_err_work);
 		schedule_delayed_work(&bcdev->adsp_voocphy_err_work, msecs_to_jiffies(8500));
 		if (is_ext_chg_ops()) {
@@ -2550,13 +2554,13 @@ static int usb_psy_get_prop(struct power_supply *psy,
 			    g_oplus_chip->tbatt_temp > BATT_TEMP_70C)) {
 				chg_err("fastchg on, hold usb online state: \n");
 				pval->intval = 1;
+			} else if (pval->intval == 0 && g_oplus_chip && g_oplus_chip->mmi_fastchg == 0) {
+				chg_err("mmi_fastchg=0, hold usb online state\n");
+				pval->intval = 1;
 			} else if ((usb_psy_desc.type != POWER_SUPPLY_TYPE_UNKNOWN) &&
 			    (g_oplus_chip && g_oplus_chip->charger_volt < VBUS_VOTAGE_3000MV)) {
 				schedule_delayed_work(&bcdev->usb_type_work, 0);
 				chg_err("fastchg not, clear usb type: \n");
-			} else if (pval->intval == 0 && g_oplus_chip && g_oplus_chip->mmi_fastchg == 0) {
-				chg_err("mmi_fastchg=0, hold usb online state\n");
-				pval->intval = 1;
 			}
 		} else {
 			if (pval->intval == 0 && g_oplus_chip && g_oplus_chip->mmi_fastchg == 0) {
@@ -2900,10 +2904,7 @@ static int battery_psy_get_prop(struct power_supply *psy,
 					oplus_vooc_get_fastchg_to_warm() == true ||
 					oplus_vooc_get_fastchg_dummy_started() == true) {
 					if (chip->prop_status != POWER_SUPPLY_STATUS_FULL) {
-						if (chip->tbatt_status == BATTERY_STATUS__REMOVED)
-							pval->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
-						else
-							pval->intval = POWER_SUPPLY_STATUS_CHARGING;
+						pval->intval = POWER_SUPPLY_STATUS_CHARGING;
 					} else {
 						pval->intval = chip->prop_status;
 					}
@@ -2912,7 +2913,8 @@ static int battery_psy_get_prop(struct power_supply *psy,
 				}
 
 				if (chip->tbatt_status == BATTERY_STATUS__HIGH_TEMP ||
-					chip->tbatt_status == BATTERY_STATUS__LOW_TEMP)
+					chip->tbatt_status == BATTERY_STATUS__LOW_TEMP ||
+					chip->tbatt_status == BATTERY_STATUS__REMOVED)
 					pval->intval = chip->prop_status;
 
 				if ((oplus_is_vooc_project() == DUAL_BATT_150W || oplus_is_vooc_project() == DUAL_BATT_240W)
@@ -5852,7 +5854,6 @@ static int oplus_usbtemp_dischg_action(struct oplus_chg_chip *chip)
 		if (oplus_is_pps_charging()) {
 			chg_err("oplus_pps_stop_usb_temp\n");
 			oplus_pps_stop_usb_temp();
-			msleep(700);
 		}
 		usleep_range(10000, 10000);
 		chip->chg_ops->charger_suspend();
@@ -8084,7 +8085,7 @@ static void oplus_plugin_irq_work(struct work_struct *work)
 		usb_plugin_status = 1;
 		chg_err("usbin_status_test %d\n", usbin_status_test);
 	}
-
+	oplus_adsp_voocphy_set_fastchg_start(false);
 	chg_err("!!!prop[%d], usb_online[%d]\n", pst->prop[USB_IN_STATUS], bcdev->usb_in_status);
 	oplus_quirks_notify_plugin(bcdev->usb_in_status);
 	oplus_chg_track_check_wired_charging_break(usb_plugin_status);
@@ -8092,7 +8093,14 @@ static void oplus_plugin_irq_work(struct work_struct *work)
 		chg_err("is_abnormal_adapter[%d]\n", chip->is_abnormal_adapter);
 		oplus_chg_check_break(usb_plugin_status);
 		if (!bcdev->usb_in_status) {
-			schedule_delayed_work(&bcdev->check_charger_out_work, round_jiffies_relative(msecs_to_jiffies(3000)));
+			if (oplus_vooc_get_fastchg_started() == true) {
+				chg_err("!!!Air charging happen,need check charger out\n");
+				schedule_delayed_work(&bcdev->check_charger_out_work,
+							round_jiffies_relative(msecs_to_jiffies(1500)));
+			} else {
+				schedule_delayed_work(&bcdev->check_charger_out_work,
+							round_jiffies_relative(msecs_to_jiffies(3000)));
+			}
 		}
 	}
 	bcdev->real_chg_type = POWER_SUPPLY_TYPE_UNKNOWN;
@@ -8149,6 +8157,7 @@ static void oplus_plugin_irq_work(struct work_struct *work)
 					oplus_chg_wake_update_work();
 				} else if (oplus_vooc_get_fastchg_started() == false) {
 					printk(KERN_ERR "[%s]: plug out fastchg_to_normal/warm/dummy or not vooc\n", __func__);
+					cancel_delayed_work_sync(&chip->update_work);
 					oplus_vooc_reset_fastchg_after_usbout();
 					smbchg_set_chargerid_switch_val(0);
 					chip->chargerid_volt = 0;
@@ -8878,6 +8887,30 @@ static int oplus_get_ibus_current(void)
 	ibus = DIV_ROUND_CLOSEST((int)pst->prop[prop_id], 1000);
 
 	return ibus;
+}
+
+int oplus_adsp_batt_curve_current(void)
+{
+	int rc = 0;
+	static int batt_current = 0;
+	struct battery_chg_dev *bcdev = NULL;
+	struct psy_state *pst = NULL;
+	struct oplus_chg_chip *chip = g_oplus_chip;
+
+	if (!chip) {
+		return -1;
+	}
+	bcdev = chip->pmic_spmi.bcdev_chip;
+	pst = &bcdev->psy_list[PSY_TYPE_USB];
+
+	rc = read_property_id(bcdev, pst, USB_GET_BATT_CURR);
+	if (rc < 0) {
+		chg_err("read battery curr fail, rc=%d\n", rc);
+		return batt_current;
+	}
+	batt_current = DIV_ROUND_CLOSEST((int)pst->prop[USB_GET_BATT_CURR], 1000);
+	chg_err("get batt_curr = %d \n", batt_current);
+	return batt_current*100;
 }
 
 int oplus_adsp_voocphy_get_fast_chg_type(void)
@@ -10267,6 +10300,7 @@ static int fg_bq28z610_update_soc_smooth_parameter(void)
 	struct battery_chg_dev *bcdev = NULL;
 	struct psy_state *pst = NULL;
 	int sleep_mode_status = -1;
+	int retry_count = 0;
 
 	if (!g_oplus_chip) {
 		chg_err("g_oplus_chip is NULL!\n");
@@ -10290,8 +10324,10 @@ read_parameter:
 	}
 
 	chg_debug("bq8z610 sleep mode status = %d\n", sleep_mode_status);
-	if (sleep_mode_status != 1) {
+	if (sleep_mode_status != 1 && retry_count < 3) {
 		msleep(2000);
+		retry_count++;
+		chg_err("shipmode retry count =%d\n", retry_count);
 		goto read_parameter;
 	}
 

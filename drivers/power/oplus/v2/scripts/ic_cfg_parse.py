@@ -376,7 +376,7 @@ def creat_h_file_head(file):
     file.write("// SPDX-License-Identifier: GPL-2.0-only\n")
     file.write("/*\n")
     file.write(" * Copyright (C) %d-%d Oplus. All rights reserved.\n" %
-               (today.year, today.year))
+               (2022, today.year))
     file.write(" */\n\n")
     file.write("#ifndef __OPLUS_CHG_IC_CFG_H__\n")
     file.write("#define __OPLUS_CHG_IC_CFG_H__\n\n")
@@ -520,7 +520,7 @@ def creat_debug_file(cfg, file):
     file.write("// SPDX-License-Identifier: GPL-2.0-only\n")
     file.write("/*\n")
     file.write(" * Copyright (C) %d-%d Oplus. All rights reserved.\n" %
-               (today.year, today.year))
+               (2022, today.year))
     file.write(" */\n\n")
 
     ic_list = cfg['oplus_chg_ic_list']
@@ -546,10 +546,10 @@ def markdown_write_para_info(func, file, language):
     language_check(language)
     if len(func['parameter_list']) > 0:
         if language == 'zh':
-            file.write("* 参数\n")
+            file.write("* 参数\n\n")
             file.write("|序号|参数类型|取值范围|输入/输出|描述|\n")
         elif language == 'en':
-            file.write("* Parameter\n")
+            file.write("* Parameter\n\n")
             file.write("|number|type|value range|in/out|describe|\n")
         file.write("|:----:|:----:|:----:|:----:|:----|\n")
         param_count = 0
@@ -585,10 +585,10 @@ def markdown_write_vict_info(func, base, index, file, language):
     language_check(language)
     vict = func['vict']
     if language == 'zh':
-        file.write("* 工具支持\n")
+        file.write("* 工具支持\n\n")
         file.write("|操作|是否支持|命令|描述|\n")
     elif language == 'en':
-        file.write("* Tool support\n")
+        file.write("* Tool support\n\n")
         file.write("|operation|support|command|describe|\n")
     file.write("|:----:|:----:|:----:|:----:|\n")
     if vict_read_support(vict):

@@ -803,6 +803,7 @@ int mp2650_input_current_limit_write(int current_ma)
         	i = i - 2; //We DO NOT use 1.2A here
         	goto aicl_pre_step;
 	} else if (current_ma < 1200) {
+        	i = i - 1; /* We use 1A here */
         	goto aicl_end;
 	}
 

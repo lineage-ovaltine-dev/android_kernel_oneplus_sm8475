@@ -26,20 +26,11 @@
 #include "op_wlchg_v2/oplus_chg_wls.h"
 #include "oplus_charger.h"
 #include "oplus_gauge.h"
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-#include "op_wlchg_v2/oplus_chg_cfg.h"
-#endif
 
 static int camera_on_count;
 
 extern struct oplus_chg_chip *g_oplus_chip;
 extern bool oplus_get_wired_chg_present(void);
-
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-static bool force_update = false;
-module_param(force_update, bool, 0644);
-MODULE_PARM_DESC(force_update, "Allow updates during charging");
-#endif
 
 struct oplus_chg_comm {
 	struct device *dev;
@@ -93,12 +84,6 @@ struct oplus_chg_comm {
 
 	struct delayed_work heartbeat_work;
 	struct delayed_work wls_chging_keep_clean_work;
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-	u8 *config_buf;
-	bool config_update_pending;
-	struct delayed_work config_update_work;
-	struct mutex config_lock;
-#endif
 	bool cmd_data_ok;
 	bool hidl_handle_cmd_ready;
 	struct mutex read_lock;
@@ -132,7 +117,7 @@ static struct oplus_chg_comm_config default_chg = {
 	.wls_ffc_fcc_ma = { { 550, 550 }, { 350, 350 } },
 	.wls_ffc_fcc_cutoff_ma = { { 400, 400 }, { 200, 200 } },
 	.bpp_vchg_min_mv = 4000,
-	.bpp_vchg_max_mv = 6000,
+	.bpp_vchg_max_mv = 8000,
 	.epp_vchg_min_mv = 4000,
 	.epp_vchg_max_mv = 14000,
 	.fast_vchg_min_mv = 4000,
@@ -405,193 +390,6 @@ static int oplus_chg_comm_get_skin_temp(struct oplus_chg_comm *comm_dev)
 	return 250;
 }
 
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-static int oplus_chg_comm_set_config(struct oplus_chg_comm *comm_dev, u8 *buf)
-{
-	struct oplus_chg_comm_config *comm_cfg = &comm_dev->comm_cfg;
-	struct oplus_chg_comm_config *comm_cfg_temp = NULL;
-	int rc;
-
-	comm_cfg_temp = kmalloc(sizeof(struct oplus_chg_comm_config), GFP_KERNEL);
-	if (comm_cfg_temp == NULL) {
-		pr_err("alloc comm_cfg buf error\n");
-		return -ENOMEM;
-	}
-	memcpy(comm_cfg_temp, comm_cfg, sizeof(struct oplus_chg_comm_config));
-	rc = oplus_chg_cfg_load_param(buf, OPLUS_CHG_COMM_PARAM, (u8 *)comm_cfg_temp);
-	if (rc < 0)
-		goto out;
-	memcpy(comm_cfg, comm_cfg_temp, sizeof(struct oplus_chg_comm_config));
-
-out:
-	kfree(comm_cfg_temp);
-	return rc;
-}
-
-static int oplus_chg_config_update(struct oplus_chg_comm *comm_dev, u8 *buf)
-{
-	int rc;
-
-	rc = oplus_chg_comm_set_config(comm_dev, buf);
-	if (rc < 0) {
-		pr_err("set common config error, rc=%d\n", rc);
-		return rc;
-	}
-	if (is_wls_ocm_available(comm_dev)) {
-		rc = oplus_chg_wls_set_config(comm_dev->wls_ocm, buf);
-		if (rc < 0) {
-			pr_err("set wireless config error, rc=%d\n", rc);
-			return rc;
-		}
-	}
-
-	return 0;
-}
-
-static void oplus_chg_config_update_work(struct work_struct *work)
-{
-	struct delayed_work *dwork = to_delayed_work(work);
-	struct oplus_chg_comm *comm_dev = container_of(dwork, struct oplus_chg_comm, config_update_work);
-	int rc;
-
-	if (!force_update && (is_usb_charger_online(comm_dev) || is_wls_charger_online(comm_dev))) {
-		comm_dev->config_update_pending = true;
-		pr_info("usb or wireless charging, postpone update\n");
-		return;
-	}
-	if (comm_dev->config_buf == NULL) {
-		pr_info("config buf is NULL\n");
-		return;
-	}
-
-	mutex_lock(&comm_dev->config_lock);
-	rc = oplus_chg_config_update(comm_dev, comm_dev->config_buf);
-	if (rc < 0)
-		pr_err("update charge params error, rc=%d\n", rc);
-	else
-		pr_info("update charge params success\n");
-	if (comm_dev->config_buf != NULL)
-		kfree(comm_dev->config_buf);
-	comm_dev->config_buf = NULL;
-	comm_dev->config_update_pending = false;
-	mutex_unlock(&comm_dev->config_lock);
-
-	return;
-}
-
-ssize_t oplus_chg_comm_charge_parameter_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	int ret;
-
-	ret = sprintf(buf, "common\n");
-	return ret;
-}
-
-#define RECEIVE_START 0
-#define RECEIVE_FW 1
-#define RECEIVE_END 2
-ssize_t oplus_chg_comm_charge_parameter_store(struct device *dev, struct device_attribute *attr, const char *buf,
-					      size_t count)
-{
-	struct oplus_chg_mod *ocm = dev_get_drvdata(dev);
-	struct oplus_chg_comm *comm_dev = oplus_chg_mod_get_drvdata(ocm);
-	u8 temp_buf[sizeof(struct oplus_chg_cfg_head)];
-	static u8 *cfg_buf;
-	static int receive_step = RECEIVE_START;
-	static int cfg_index;
-	static int cfg_size;
-	struct oplus_chg_cfg_head *cfg_head;
-	ssize_t rc;
-
-start:
-	switch (receive_step) {
-	case RECEIVE_START:
-		if (count < sizeof(struct oplus_chg_cfg_head)) {
-			pr_err("cfg data format error\n");
-			return -EINVAL;
-		}
-		memset(temp_buf, 0, sizeof(struct oplus_chg_cfg_head));
-		memcpy(temp_buf, buf, sizeof(struct oplus_chg_cfg_head));
-		cfg_head = (struct oplus_chg_cfg_head *)temp_buf;
-		if (cfg_head->magic == OPLUS_CHG_CFG_MAGIC) {
-			cfg_size = cfg_head->size + sizeof(struct oplus_chg_cfg_head);
-			cfg_buf = kzalloc(cfg_size, GFP_KERNEL);
-			if (cfg_buf == NULL) {
-				pr_err("alloc cfg_buf err\n");
-				return -ENOMEM;
-			}
-			pr_err("cfg data header verification succeeded, cfg_size=%d\n", cfg_size);
-			memcpy(cfg_buf, buf, count);
-			cfg_index = count;
-			pr_info("Receiving cfg data, cfg_size=%d, cfg_index=%d\n", cfg_size, cfg_index);
-			if (cfg_index >= cfg_size) {
-				receive_step = RECEIVE_END;
-				goto start;
-			} else {
-				receive_step = RECEIVE_FW;
-			}
-		} else {
-			pr_err("cfg data format error\n");
-			return -EINVAL;
-		}
-		break;
-	case RECEIVE_FW:
-		memcpy(cfg_buf + cfg_index, buf, count);
-		cfg_index += count;
-		pr_info("Receiving cfg data, cfg_size=%d, cfg_index=%d\n", cfg_size, cfg_index);
-		if (cfg_index >= cfg_size) {
-			receive_step = RECEIVE_END;
-			goto start;
-		}
-		break;
-	case RECEIVE_END:
-		rc = oplus_chg_check_cfg_data(cfg_buf);
-		if (rc < 0) {
-			kfree(cfg_buf);
-			cfg_buf = NULL;
-			receive_step = RECEIVE_START;
-			pr_err("cfg data verification failed, rc=%d\n", rc);
-			return rc;
-		}
-		if (!force_update && (is_usb_charger_online(comm_dev) || is_wls_charger_online(comm_dev))) {
-			pr_info("usb or wireless charging, postpone update\n");
-			mutex_lock(&comm_dev->config_lock);
-			comm_dev->config_update_pending = true;
-			comm_dev->config_buf = cfg_buf;
-			mutex_unlock(&comm_dev->config_lock);
-		} else {
-			mutex_lock(&comm_dev->config_lock);
-			comm_dev->config_update_pending = false;
-			comm_dev->config_buf = NULL;
-			mutex_unlock(&comm_dev->config_lock);
-			rc = oplus_chg_config_update(comm_dev, cfg_buf);
-			if (rc < 0) {
-				pr_err("update charge params error, rc=%d\n", rc);
-				kfree(cfg_buf);
-				cfg_buf = NULL;
-				receive_step = RECEIVE_START;
-				return rc;
-			}
-			pr_info("update charge params success\n");
-			kfree(cfg_buf);
-		}
-		cfg_buf = NULL;
-		receive_step = RECEIVE_START;
-		break;
-	default:
-		receive_step = RECEIVE_START;
-		pr_err("status error\n");
-		if (cfg_buf != NULL) {
-			kfree(cfg_buf);
-			cfg_buf = NULL;
-		}
-		break;
-	}
-
-	return count;
-}
-#endif /* CONFIG_OPLUS_CHG_DYNAMIC_CONFIG */
-
 static enum oplus_chg_mod_property oplus_chg_comm_props[] = {
 	OPLUS_CHG_PROP_CHG_ENABLE,
 	OPLUS_CHG_PROP_SHIP_MODE,
@@ -606,14 +404,9 @@ static enum oplus_chg_mod_property oplus_chg_comm_uevent_props[] = {
 	OPLUS_CHG_PROP_SKIN_TEMP,
 };
 
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-static struct oplus_chg_exten_prop oplus_chg_comm_exten_props[] = {
-	OPLUS_CHG_EXTEN_RWATTR(OPLUS_CHG_EXTERN_PROP_CHARGE_PARAMETER, oplus_chg_comm_charge_parameter),
-};
-#endif
-
-static int oplus_chg_comm_get_prop(struct oplus_chg_mod *ocm, enum oplus_chg_mod_property prop,
-				   union oplus_chg_mod_propval *pval)
+static int oplus_chg_comm_get_prop(struct oplus_chg_mod *ocm,
+			enum oplus_chg_mod_property prop,
+			union oplus_chg_mod_propval *pval)
 {
 	struct oplus_chg_comm *comm_dev = oplus_chg_mod_get_drvdata(ocm);
 	struct oplus_chg_chip *chip = oplus_chg_get_chg_struct();
@@ -718,13 +511,8 @@ static const struct oplus_chg_mod_desc oplus_chg_comm_mod_desc = {
 	.num_properties = ARRAY_SIZE(oplus_chg_comm_props),
 	.uevent_properties = oplus_chg_comm_uevent_props,
 	.uevent_num_properties = ARRAY_SIZE(oplus_chg_comm_uevent_props),
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-	.exten_properties = oplus_chg_comm_exten_props,
-	.num_exten_properties = ARRAY_SIZE(oplus_chg_comm_exten_props),
-#else
 	.exten_properties = NULL,
 	.num_exten_properties = 0,
-#endif
 	.get_property = oplus_chg_comm_get_prop,
 	.set_property = oplus_chg_comm_set_prop,
 	.property_is_writeable = oplus_chg_comm_prop_is_writeable,
@@ -758,10 +546,6 @@ static int oplus_chg_comm_event_notifier_call(struct notifier_block *nb, unsigne
 			pr_info("wls offline\n");
 			cancel_delayed_work(&comm_dev->heartbeat_work);
 		}
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-		if (comm_dev->config_update_pending)
-			schedule_delayed_work(&comm_dev->config_update_work, 0);
-#endif
 		break;
 	default:
 		break;
@@ -1298,7 +1082,7 @@ enum oplus_chg_ffc_temp_region oplus_chg_comm_get_ffc_temp_region(struct oplus_c
 		}
 		comm_dev->ffc_temp_region = temp_region;
 	} else if (comm_dev->ffc_temp_region < temp_region) {
-		for (i = 0; i < BATT_TEMP_INVALID - 1; i++) {
+		for (i = 0; i < FFC_TEMP_INVALID - 1; i++) {
 			if (i == (temp_region - 1))
 				comm_dev->ffc_temp_dynamic_thr[i] = comm_dev->ffc_temp_dynamic_thr[i] - BATT_TEMP_HYST;
 			else
@@ -2341,10 +2125,6 @@ static int oplus_chg_comm_driver_probe(struct platform_device *pdev)
 
 	INIT_DELAYED_WORK(&comm_dev->heartbeat_work, oplus_chg_heartbeat_work);
 	INIT_DELAYED_WORK(&comm_dev->wls_chging_keep_clean_work, oplus_chg_wls_chging_keep_clean_work);
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-	INIT_DELAYED_WORK(&comm_dev->config_update_work, oplus_chg_config_update_work);
-	mutex_init(&comm_dev->config_lock);
-#endif
 
 	pr_info("probe done\n");
 

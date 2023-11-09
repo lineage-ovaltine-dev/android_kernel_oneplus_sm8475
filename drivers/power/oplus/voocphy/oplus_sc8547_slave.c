@@ -391,6 +391,58 @@ static int sc8547_slave_init_device(struct oplus_voocphy_manager *chip)
 	return 0;
 }
 
+
+static int sc8547_slave_reset_device(struct oplus_voocphy_manager *chip)
+{
+	u8 reg_data;
+
+	sc8547_slave_write_byte(chip->slave_client, SC8547_REG_11,
+				0x00); /* ADC_CTRL:disable */
+	/* The logic does not change when the main CP controls OVP */
+	if (chip->ovp_ctrl_cpindex == MASTER_CP_ID)
+		sc8547_slave_write_byte(chip->slave_client,
+					SC8547_REG_02, 0x07);
+	sc8547_slave_write_byte(chip->slave_client,
+				SC8547_REG_04, 0x00); /* VBUS_OVP:10 2:1 or 1:1V */
+	reg_data = 0x20 | (chip->ocp_reg & 0xf);
+	sc8547_slave_write_byte(chip->slave_client,
+				SC8547_REG_00, reg_data); /* VBAT_OVP:4.65V */
+	if (!ic_sc8547a) {
+		/* bit5:4 sc8547 deglitch time for IBUS_UCP_FALL 5ms */
+		reg_data = 0x28;
+	} else {
+		/* bit5:4 sc8547a deglitch time for IBUS_UCP_FALL 5ms */
+		reg_data = 0x18;
+	}
+	sc8547_slave_write_byte(chip->slave_client, SC8547_REG_05,
+				reg_data); /* IBUS_OCP_UCP:3.6A  */
+	sc8547_slave_write_byte(chip->slave_client,
+				SC8547_REG_2B, 0x00); /* VOOC_CTRL:disable */
+	sc8547_slave_write_byte(chip->slave_client,
+				SC8547_REG_30, 0x7F);
+	sc8547_slave_write_byte(chip->slave_client,
+				SC8547_REG_3C, 0x40);
+
+	/* bit2:0 Set the CP switching frequency 550kHz */
+	if (!ic_sc8547a) {
+		sc8547_slave_write_byte(chip->slave_client, SC8547_REG_07, 0x05);
+	} else {
+		sc8547_slave_write_byte(chip->slave_client, SC8547_REG_07, 0x1);
+	}
+
+	return 0;
+}
+
+/* When OVP control by CP, reset the OVP related registers at the end*/
+static int sc8547_slave_reset_ovp(struct oplus_voocphy_manager *chip)
+{
+	if (chip->ovp_ctrl_cpindex == SLAVE_CP_ID) {
+		sc8547_slave_write_byte(chip->slave_client, SC8547_REG_02, 0x07);
+		pr_err("sc8547_slave_reset_ovp VAC_OVP to 6.5v\n");
+	}
+	return 0;
+}
+
 static int sc8547_slave_init_vooc(struct oplus_voocphy_manager *chip)
 {
 	pr_err("sc8547_slave_init_vooc\n");
@@ -484,9 +536,12 @@ static int sc8547_slave_hw_setting(struct oplus_voocphy_manager *chip, int reaso
 	}
 	switch (reason) {
 	case SETTING_REASON_PROBE:
-	case SETTING_REASON_RESET:
 		sc8547_slave_init_device(chip);
-		pr_info("SETTING_REASON_RESET OR PROBE\n");
+		pr_info("SETTING_REASON_PROBE\n");
+		break;
+	case SETTING_REASON_RESET:
+		sc8547_slave_reset_device(chip);
+		pr_info("SETTING_REASON_RESET\n");
 		break;
 	case SETTING_REASON_SVOOC:
 		sc8547_slave_svooc_hw_setting(chip);
@@ -590,6 +645,7 @@ static struct oplus_voocphy_operations oplus_sc8547_slave_ops = {
 	.get_cp_status 		= sc8547_slave_get_cp_status,
 	.get_voocphy_enable 	= sc8547_slave_get_voocphy_enable,
 	.dump_voocphy_reg	= sc8547_slave_dump_reg_in_err_issue,
+	.reset_voocphy_ovp	= sc8547_slave_reset_ovp,
 };
 
 static int sc8547_slave_parse_dt(struct oplus_voocphy_manager *chip)

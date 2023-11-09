@@ -115,14 +115,14 @@
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
 struct oem_read_buffer_req_msg {
-    struct pmic_glink_hdr hdr;
-    u32 data_size;
+	struct pmic_glink_hdr hdr;
+	u32 data_size;
 };
 
 struct oem_read_buffer_resp_msg {
-    struct pmic_glink_hdr hdr;
-    u32 data_buffer[MAX_OEM_PROPERTY_DATA_SIZE];
-    u32 data_size;
+	struct pmic_glink_hdr hdr;
+	u32 data_buffer[MAX_OEM_PROPERTY_DATA_SIZE];
+	u32 data_size;
 };
 struct adsp_track_read_req_msg {
 	struct pmic_glink_hdr hdr;
@@ -139,11 +139,11 @@ struct adsp_track_read_resp_msg {
 #ifdef OPLUS_FEATURE_CHG_BASIC
 typedef enum _PM_TYPEC_PORT_ROLE_TYPE
 {
-    TYPEC_PORT_ROLE_DRP,
-    TYPEC_PORT_ROLE_SNK,
-    TYPEC_PORT_ROLE_SRC,
-    TYPEC_PORT_ROLE_DISABLE,
-    TYPEC_PORT_ROLE_INVALID
+	TYPEC_PORT_ROLE_DRP,
+	TYPEC_PORT_ROLE_SNK,
+	TYPEC_PORT_ROLE_SRC,
+	TYPEC_PORT_ROLE_DISABLE,
+	TYPEC_PORT_ROLE_INVALID
 } PM_TYPEC_PORT_ROLE_TYPE;
 #endif
 
@@ -186,9 +186,9 @@ enum battery_property_id {
 	BATT_POWER_NOW,
 	BATT_POWER_AVG,
 #ifdef OPLUS_FEATURE_CHG_BASIC
-	BATT_CHG_EN,//sjc add
-	BATT_SET_PDO,//sjc add
-	BATT_SET_QC,//sjc add
+	BATT_CHG_EN,/*sjc add*/
+	BATT_SET_PDO,/*sjc add*/
+	BATT_SET_QC,/*sjc add*/
 	BATT_SET_SHIP_MODE,/*sjc add*/
 	BATT_SET_COOL_DOWN,/*lzj add*/
 	BATT_SET_MATCH_TEMP,/*lzj add*/
@@ -226,7 +226,7 @@ enum usb_property_id {
 	USB_REAL_TYPE,
 	USB_TYPEC_COMPLIANT,
 #ifdef OPLUS_FEATURE_CHG_BASIC
-	USB_ADAP_SUBTYPE,//sjc add
+	USB_ADAP_SUBTYPE,/*sjc add*/
 	USB_VBUS_COLLAPSE_STATUS,
 	USB_VOOCPHY_STATUS,
 	USB_VOOCPHY_ENABLE,
@@ -441,6 +441,10 @@ struct oplus_custom_gpio_pinctrl {
 	struct pinctrl		*wrx_otg_en_pinctrl;
 	struct pinctrl_state	*wrx_otg_en_active;
 	struct pinctrl_state	*wrx_otg_en_sleep;
+	struct pinctrl		*batt0_btb_gpio_pinctrl;
+	struct pinctrl_state	*batt0_btb_gpio_default;
+	struct pinctrl		*batt1_btb_gpio_pinctrl;
+	struct pinctrl_state	*batt1_btb_gpio_default;
 };
 #endif
 
@@ -517,6 +521,7 @@ struct battery_chg_dev {
 	struct mutex			chg_en_lock;
 	bool 				chg_en;
 	bool					cid_status;
+	bool					qc_enable_status;
 
 	struct delayed_work status_keep_clean_work;
 	struct delayed_work status_keep_delay_unlock_work;

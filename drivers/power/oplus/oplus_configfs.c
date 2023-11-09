@@ -31,6 +31,8 @@
 #include <soc/oplus/system/oplus_project.h>
 #endif
 
+#define OPLUS_SVOOC_ID_MIN    10
+
 static struct class *oplus_chg_class;
 static struct device *oplus_ac_dir;
 static struct device *oplus_usb_dir;
@@ -676,10 +678,11 @@ static ssize_t normal_current_now_store(struct device *dev, struct device_attrib
 	chg_err("val:%d\n", val);
 	if (!chip->led_on) {
 		if (chip->smart_normal_cool_down == 0) {
-			if (oplus_pps_get_support_type() != PPS_SUPPORT_NOT)
+			if (oplus_pps_get_support_type() != PPS_SUPPORT_NOT) {
 				chip->normal_cool_down = oplus_convert_pps_current_to_level(chip, val);
-			else
+			} else {
 				chip->normal_cool_down = oplus_convert_current_to_level(chip, val);
+			}
 			chg_err("set normal_cool_down:%d\n", val);
 		}
 	}
@@ -1420,6 +1423,7 @@ static ssize_t bcc_parms_show(struct device *dev, struct device_attribute *attr,
 	int val = 0;
 	ssize_t len = 0;
 	struct oplus_chg_chip *chip = NULL;
+        int type = oplus_chg_get_fast_chg_type();
 
 	chip = (struct oplus_chg_chip *)dev_get_drvdata(oplus_battery_dir);
 	if (!chip) {
@@ -1427,7 +1431,9 @@ static ssize_t bcc_parms_show(struct device *dev, struct device_attribute *attr,
 		return -EINVAL;
 	}
 
-	if (oplus_vooc_get_reply_bits() == 7 && oplus_chg_get_voocphy_support() == NO_VOOCPHY) {
+	if (oplus_vooc_get_reply_bits() == 7
+                && oplus_chg_get_voocphy_support() == NO_VOOCPHY
+                && (type == CHARGER_SUBTYPE_FASTCHG_SVOOC || type >= OPLUS_SVOOC_ID_MIN)) {
 		val = oplus_gauge_get_prev_bcc_parameters(buf);
 	} else {
 		val = oplus_gauge_get_bcc_parameters(buf);
@@ -1476,6 +1482,7 @@ static ssize_t bcc_current_store(struct device *dev, struct device_attribute *at
 {
 	int val = 0, ret = 0;
 	struct oplus_chg_chip *chip = NULL;
+	union oplus_chg_mod_propval pval;
 
 	chip = (struct oplus_chg_chip *)dev_get_drvdata(oplus_battery_dir);
 	if (!chip) {
@@ -1492,6 +1499,11 @@ static ssize_t bcc_current_store(struct device *dev, struct device_attribute *at
 	if (ret < 0) {
 		chg_err("error\n");
 		return -EINVAL;
+	}
+	if (is_wls_ocm_available(chip)) {
+		pval.intval = val;
+		oplus_chg_mod_set_property(chip->wls_ocm,
+			OPLUS_CHG_PROP_BCC_CURRENT, &pval);
 	}
 
 	mutex_lock(&chip->bcc_curr_done_mutex);
@@ -1640,6 +1652,57 @@ static ssize_t aging_ffc_data_store(struct device *dev, struct device_attribute 
 }
 static DEVICE_ATTR_RW(aging_ffc_data);
 
+static ssize_t battery_charging_state_show(struct device *dev, struct device_attribute *attr,
+		char *buf)
+{
+	struct oplus_chg_chip *chip = NULL;
+
+	chip = (struct oplus_chg_chip *)dev_get_drvdata(oplus_battery_dir);
+	if (!chip) {
+		chg_err("chip is NULL\n");
+		return -EINVAL;
+	}
+
+	return sprintf(buf, "%d\n", chip->charging_state);
+}
+static DEVICE_ATTR_RO(battery_charging_state);
+
+static ssize_t bms_heat_temp_compensation_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct oplus_chg_chip *chip = NULL;
+
+	chip = (struct oplus_chg_chip *)dev_get_drvdata(oplus_battery_dir);
+	if (!chip) {
+		chg_err("chip is NULL\n");
+		return -EINVAL;
+	}
+
+	return sprintf(buf, "%d\n", chip->bms_heat_temp_compensation);
+}
+
+static ssize_t bms_heat_temp_compensation_store(struct device *dev, struct device_attribute *attr,
+					const char *buf, size_t count)
+{
+	int val = 0;
+	struct oplus_chg_chip *chip = NULL;
+
+	chip = (struct oplus_chg_chip *)dev_get_drvdata(oplus_battery_dir);
+	if (!chip) {
+		chg_err("chip is NULL\n");
+		return -EINVAL;
+	}
+
+	if (kstrtos32(buf, 0, &val)) {
+		chg_err("buf error\n");
+		return -EINVAL;
+	}
+
+	chip->bms_heat_temp_compensation = val;
+
+	return count;
+}
+static DEVICE_ATTR_RW(bms_heat_temp_compensation);
+
 static struct device_attribute *oplus_battery_attributes[] = {
 	&dev_attr_authenticate,
 	&dev_attr_battery_cc,
@@ -1707,6 +1770,8 @@ static struct device_attribute *oplus_battery_attributes[] = {
 	&dev_attr_design_capacity,
 	&dev_attr_smartchg_soh_support,
 	&dev_attr_aging_ffc_data,
+	&dev_attr_battery_charging_state,
+	&dev_attr_bms_heat_temp_compensation,
 	NULL
 };
 
@@ -2158,7 +2223,7 @@ static int oplus_ac_dir_create(struct oplus_chg_chip *chip)
 	dev_set_drvdata(oplus_ac_dir, chip);
 
 	attrs = oplus_ac_attributes;
-	while ((attr = *attrs++)) {
+	for (attr = *attrs; attr != NULL; attr = *(++attrs)) {
 		int err;
 
 		err = device_create_file(oplus_ac_dir, attr);
@@ -2178,7 +2243,7 @@ static void oplus_ac_dir_destroy(void)
 	struct device_attribute *attr;
 
 	attrs = oplus_ac_attributes;
-	while ((attr = *attrs++))
+	for (attr = *attrs; attr != NULL; attr = *(++attrs))
 		device_remove_file(oplus_ac_dir, attr);
 	device_destroy(oplus_ac_dir->class, oplus_ac_dir->devt);
 	unregister_chrdev_region(oplus_ac_dir->devt, 1);
@@ -2206,7 +2271,7 @@ static int oplus_usb_dir_create(struct oplus_chg_chip *chip)
 	dev_set_drvdata(oplus_usb_dir, chip);
 
 	attrs = oplus_usb_attributes;
-	while ((attr = *attrs++)) {
+	for (attr = *attrs; attr != NULL; attr = *(++attrs)) {
 		int err;
 
 		err = device_create_file(oplus_usb_dir, attr);
@@ -2226,7 +2291,7 @@ static void oplus_usb_dir_destroy(void)
 	struct device_attribute *attr;
 
 	attrs = oplus_usb_attributes;
-	while ((attr = *attrs++))
+	for (attr = *attrs; attr != NULL; attr = *(++attrs))
 		device_remove_file(oplus_usb_dir, attr);
 	device_destroy(oplus_usb_dir->class, oplus_usb_dir->devt);
 	unregister_chrdev_region(oplus_usb_dir->devt, 1);
@@ -2255,7 +2320,7 @@ static int oplus_battery_dir_create(struct oplus_chg_chip *chip)
 	dev_set_drvdata(oplus_battery_dir, chip);
 
 	attrs = oplus_battery_attributes;
-	while ((attr = *attrs++)) {
+	for (attr = *attrs; attr != NULL; attr = *(++attrs)) {
 		int err;
 
 		err = device_create_file(oplus_battery_dir, attr);
@@ -2275,7 +2340,7 @@ static void oplus_battery_dir_destroy(void)
 	struct device_attribute *attr;
 
 	attrs = oplus_battery_attributes;
-	while ((attr = *attrs++))
+	for (attr = *attrs; attr != NULL; attr = *(++attrs))
 		device_remove_file(oplus_battery_dir, attr);
 	device_destroy(oplus_battery_dir->class, oplus_battery_dir->devt);
 	unregister_chrdev_region(oplus_battery_dir->devt, 1);
@@ -2304,7 +2369,7 @@ static int oplus_wireless_dir_create(struct oplus_chg_chip *chip)
 	dev_set_drvdata(oplus_wireless_dir, chip);
 
 	attrs = oplus_wireless_attributes;
-	while ((attr = *attrs++)) {
+	for (attr = *attrs; attr != NULL; attr = *(++attrs)) {
 		int err;
 
 		err = device_create_file(oplus_wireless_dir, attr);
@@ -2324,7 +2389,7 @@ static void oplus_wireless_dir_destroy(void)
 	struct device_attribute *attr;
 
 	attrs = oplus_wireless_attributes;
-	while ((attr = *attrs++))
+	for (attr = *attrs; attr != NULL; attr = *(++attrs))
 		device_remove_file(oplus_wireless_dir, attr);
 	device_destroy(oplus_wireless_dir->class, oplus_wireless_dir->devt);
 	unregister_chrdev_region(oplus_wireless_dir->devt, 1);
@@ -2353,7 +2418,7 @@ static int oplus_common_dir_create(struct oplus_chg_chip *chip)
 	dev_set_drvdata(oplus_common_dir, chip);
 
 	attrs = oplus_common_attributes;
-	while ((attr = *attrs++)) {
+	for (attr = *attrs; attr != NULL; attr = *(++attrs)) {
 		int err;
 
 		err = device_create_file(oplus_common_dir, attr);
@@ -2373,7 +2438,7 @@ static void oplus_common_dir_destroy(void)
 	struct device_attribute *attr;
 
 	attrs = oplus_common_attributes;
-	while ((attr = *attrs++))
+	for (attr = *attrs; attr != NULL; attr = *(++attrs))
 		device_remove_file(oplus_common_dir, attr);
 	device_destroy(oplus_common_dir->class, oplus_common_dir->devt);
 	unregister_chrdev_region(oplus_common_dir->devt, 1);
@@ -2388,7 +2453,7 @@ int oplus_ac_node_add(struct device_attribute **ac_attributes)
 	struct device_attribute *attr;
 
 	attrs = ac_attributes;
-	while ((attr = *attrs++)) {
+	for (attr = *attrs; attr != NULL; attr = *(++attrs)) {
 		int err;
 
 		err = device_create_file(oplus_ac_dir, attr);
@@ -2408,7 +2473,7 @@ void oplus_ac_node_delete(struct device_attribute **ac_attributes)
 	struct device_attribute *attr;
 
 	attrs = ac_attributes;
-	while ((attr = *attrs++))
+	for (attr = *attrs; attr != NULL; attr = *(++attrs))
 		device_remove_file(oplus_ac_dir, attr);
 }
 
@@ -2418,7 +2483,7 @@ int oplus_usb_node_add(struct device_attribute **usb_attributes)
 	struct device_attribute *attr;
 
 	attrs = usb_attributes;
-	while ((attr = *attrs++)) {
+	for (attr = *attrs; attr != NULL; attr = *(++attrs)) {
 		int err;
 
 		err = device_create_file(oplus_usb_dir, attr);
@@ -2438,7 +2503,7 @@ void oplus_usb_node_delete(struct device_attribute **usb_attributes)
 	struct device_attribute *attr;
 
 	attrs = usb_attributes;
-	while ((attr = *attrs++))
+	for (attr = *attrs; attr != NULL; attr = *(++attrs))
 		device_remove_file(oplus_usb_dir, attr);
 }
 
@@ -2448,7 +2513,7 @@ int oplus_battery_node_add(struct device_attribute **battery_attributes)
 	struct device_attribute *attr;
 
 	attrs = battery_attributes;
-	while ((attr = *attrs++)) {
+	for (attr = *attrs; attr != NULL; attr = *(++attrs)) {
 		int err;
 
 		err = device_create_file(oplus_battery_dir, attr);
@@ -2468,7 +2533,7 @@ void oplus_battery_node_delete(struct device_attribute **battery_attributes)
 	struct device_attribute *attr;
 
 	attrs = battery_attributes;
-	while ((attr = *attrs++))
+	for (attr = *attrs; attr != NULL; attr = *(++attrs))
 		device_remove_file(oplus_battery_dir, attr);
 }
 
@@ -2478,7 +2543,7 @@ int oplus_wireless_node_add(struct device_attribute **wireless_attributes)
 	struct device_attribute *attr;
 
 	attrs = wireless_attributes;
-	while ((attr = *attrs++)) {
+	for (attr = *attrs; attr != NULL; attr = *(++attrs)) {
 		int err;
 
 		err = device_create_file(oplus_wireless_dir, attr);
@@ -2498,7 +2563,7 @@ void oplus_wireless_node_delete(struct device_attribute **wireless_attributes)
 	struct device_attribute *attr;
 
 	attrs = wireless_attributes;
-	while ((attr = *attrs++))
+	for (attr = *attrs; attr != NULL; attr = *(++attrs))
 		device_remove_file(oplus_wireless_dir, attr);
 }
 
@@ -2508,7 +2573,7 @@ int oplus_common_node_add(struct device_attribute **common_attributes)
 	struct device_attribute *attr;
 
 	attrs = common_attributes;
-	while ((attr = *attrs++)) {
+	for (attr = *attrs; attr != NULL; attr = *(++attrs)) {
 		int err;
 
 		err = device_create_file(oplus_common_dir, attr);
@@ -2528,7 +2593,7 @@ void oplus_common_node_delete(struct device_attribute **common_attributes)
 	struct device_attribute *attr;
 
 	attrs = common_attributes;
-	while ((attr = *attrs++))
+	for (attr = *attrs; attr != NULL; attr = *(++attrs))
 		device_remove_file(oplus_common_dir, attr);
 }
 

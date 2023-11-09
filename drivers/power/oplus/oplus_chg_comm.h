@@ -140,11 +140,6 @@ void oplus_chg_comm_update_config(struct oplus_chg_mod *comm_ocm);
 bool oplus_chg_comm_batt_vol_over_cl_thr(struct oplus_chg_mod *comm_ocm);
 int oplus_chg_comm_get_batt_health(struct oplus_chg_mod *comm_ocm);
 int oplus_chg_comm_get_batt_status(struct oplus_chg_mod *comm_ocm);
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-ssize_t oplus_chg_comm_charge_parameter_show(struct device *dev, struct device_attribute *attr, char *buf);
-ssize_t oplus_chg_comm_charge_parameter_store(struct device *dev, struct device_attribute *attr, const char *buf,
-					      size_t count);
-#endif
 
 int oplus_chg_comm_reg_mutual_notifier(struct notifier_block *nb);
 int oplus_chg_comm_unreg_mutual_notifier(struct notifier_block *nb);

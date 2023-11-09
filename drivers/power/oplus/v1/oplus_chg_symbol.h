@@ -29,6 +29,7 @@
 
 #define oplus_chg_wake_update_work oplus_chg_wake_update_work_v1
 #define oplus_chg_check_chip_is_null oplus_chg_check_chip_is_null_v1
+#define oplus_chg_check_ui_soc oplus_chg_check_ui_soc_v1
 #define oplus_is_vooc_project oplus_is_vooc_project_v1
 #define oplus_chg_show_vooc_logo_ornot oplus_chg_show_vooc_logo_ornot_v1
 #define oplus_get_prop_status oplus_get_prop_status_v1

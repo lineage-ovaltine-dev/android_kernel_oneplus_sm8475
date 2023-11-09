@@ -598,7 +598,7 @@
 #define MP2762HW_AICL_POINT_5V_PHASE2		4520
 #define MP2762SW_AICL_POINT_5V_PHASE2		4535
 
-#define WAIT_RESUME_MAX_TRY_TIME                30
+#define WAIT_RESUME_MAX_TRY_TIME                100
 
 enum {
 	OVERTIME_AC = 0,

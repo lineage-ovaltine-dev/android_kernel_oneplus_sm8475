@@ -74,6 +74,8 @@ struct oplus_vooc_config {
 	uint8_t support_vooc_by_normal_charger_path;
 	uint8_t svooc_support;
 	uint8_t vooc_bad_volt_check_support;
+	uint32_t max_power_w;
+	uint32_t voocphy_support;
 	uint32_t vooc_project;
 	uint32_t vooc_version;
 	uint8_t *strategy_name;
@@ -123,6 +125,7 @@ struct oplus_chg_vooc {
 	struct votable *pd_svooc_votable;
 	struct votable *wired_icl_votable;
 	struct votable *common_chg_suspend_votable;
+	struct votable *vooc_chg_auto_mode_votable;
 
 	struct work_struct vooc_watchdog_work;
 	struct timer_list watchdog;
@@ -163,6 +166,7 @@ struct oplus_chg_vooc {
 
 	bool wired_present;
 	int cc_detect;
+	int typec_state;
 	bool is_abnormal_adapter;
 	bool pre_is_abnormal_adapter;
 	bool support_abnormal_adapter;
@@ -207,10 +211,15 @@ struct oplus_chg_vooc {
 struct oplus_adapter_struct {
 	unsigned char id_min;
 	unsigned char id_max;
-	unsigned char power_vooc;
-	unsigned char power_svooc;
+	unsigned int power_vooc;
+	unsigned int power_svooc;
 	enum oplus_adapter_type adapter_type;
 	enum oplus_adapter_chg_type adapter_chg_type;
+};
+
+struct current_level {
+	int level;
+	int curr_ma;
 };
 
 #define VOOC_NOTIFY_FAST_PRESENT		0x52
@@ -281,53 +290,70 @@ static int oplus_vooc_7bit_curr_table[CURR_LIMIT_7BIT_MAX - 1] = {
 	5500, 6000,  6300,  6500,  7000,  7500,	 8000,	8500, 9000,
 	9500, 10000, 10500, 11000, 11500, 12000, 12500,
 };
+
+struct current_level svooc_2_0_curr_table[] = {
+	{ 1, 1000 },   { 2, 1500 },   { 3, 2000 },   { 4, 2500 },   { 5, 3000 },   { 6, 3500 },	 { 7, 4000 },
+	{ 8, 4500 },   { 9, 5000 },   { 10, 5500 },  { 11, 6000 },  { 12, 6300 },  { 13, 6500 }, { 14, 7000 },
+	{ 15, 7500 },  { 15, 7300 },  { 16, 8000 },  { 17, 8500 },  { 18, 9000 },  { 19, 9500 }, { 20, 10000 },
+	{ 21, 10500 }, { 22, 11000 }, { 23, 11500 }, { 24, 12000 }, { 25, 12500 },
+};
+
+struct current_level svooc_1_0_curr_table[] = {
+	{ 1, 2000 },   { 2, 2000 },   { 3, 2000 },   { 4, 3000 },  { 5, 4000 },
+	{ 6, 5000 },   { 7, 6000 },   { 8, 7000 },   { 9, 8000 },  { 10, 9000 },
+	{ 11, 10000 }, { 12, 11000 }, { 13, 12000 }, { 14, 12600 }
+};
+
+struct current_level old_svooc_1_0_curr_table[] = { /*20638 RT5125 50W*/
+	{ 1, 2000 },  { 2, 3000 },  { 3, 4000 },   { 4, 5000 },
+	{ 5, 6000 },  { 6, 7000 },  { 7, 8000 },   { 8, 9000 },
+	{ 9, 10000 }, { 10, 1200 }, { 11, 12000 }, { 12, 12600 }
+};
+
 static struct oplus_adapter_struct adapter_id_table[] = {
-	{ 0x0, 0x0, ADAPTER_POWER_UNKNOWN, ADAPTER_POWER_UNKNOWN,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_VOOC },
-	{ 0x11, 0x12, ADAPTER_POWER_30W, ADAPTER_POWER_50W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
-	{ 0x13, 0x13, ADAPTER_POWER_20W, ADAPTER_POWER_UNKNOWN,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_VOOC },
-	{ 0x14, 0x14, ADAPTER_POWER_30W, ADAPTER_POWER_65W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
-	{ 0x19, 0x19, ADAPTER_POWER_30W, ADAPTER_POWER_UNKNOWN,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_VOOC },
-	{ 0x21, 0x21, ADAPTER_POWER_30W, ADAPTER_POWER_50W,
-	  ADAPTER_TYPE_CAR, CHARGER_TYPE_SVOOC },
-	{ 0x29, 0x29, ADAPTER_POWER_30W, ADAPTER_POWER_UNKNOWN,
-	  ADAPTER_TYPE_CAR, CHARGER_TYPE_VOOC },
-	{ 0x31, 0x31, ADAPTER_POWER_30W, ADAPTER_POWER_50W,
-	  ADAPTER_TYPE_PB, CHARGER_TYPE_SVOOC },
-	{ 0x32, 0x32, ADAPTER_POWER_30W, ADAPTER_POWER_65W,
-	  ADAPTER_TYPE_PB, CHARGER_TYPE_SVOOC },
-	{ 0x33, 0x33, ADAPTER_POWER_30W, ADAPTER_POWER_50W,
-	  ADAPTER_TYPE_PB, CHARGER_TYPE_SVOOC },
-	{ 0x34, 0x34, ADAPTER_POWER_20W, ADAPTER_POWER_20W,
-	  ADAPTER_TYPE_PB, CHARGER_TYPE_NORMAL },
-	{ 0x35, 0x36, ADAPTER_POWER_30W, ADAPTER_POWER_65W,
-	  ADAPTER_TYPE_PB, CHARGER_TYPE_SVOOC },
-	{ 0x41, 0x41, ADAPTER_POWER_30W, ADAPTER_POWER_UNKNOWN,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_VOOC },
-	{ 0x42, 0x46, ADAPTER_POWER_UNKNOWN, ADAPTER_POWER_UNKNOWN,
-	  ADAPTER_TYPE_UNKNOWN, CHARGER_TYPE_VOOC },
-	{ 0x49, 0x4a, ADAPTER_POWER_15W, ADAPTER_POWER_33W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
-	{ 0x4b, 0x4e, ADAPTER_POWER_30W, ADAPTER_POWER_80W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
-	{ 0x61, 0x61, ADAPTER_POWER_15W, ADAPTER_POWER_33W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
-	{ 0x62, 0x62, ADAPTER_POWER_30W, ADAPTER_POWER_50W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
-	{ 0x63, 0x64, ADAPTER_POWER_30W, ADAPTER_POWER_65W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
-	{ 0x65, 0x65, ADAPTER_POWER_30W, ADAPTER_POWER_80W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
-	{ 0x66, 0x66, ADAPTER_POWER_30W, ADAPTER_POWER_65W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
-	{ 0x69, 0x6b, ADAPTER_POWER_30W, ADAPTER_POWER_100W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
-	{ 0x6c, 0x6e, ADAPTER_POWER_30W, ADAPTER_POWER_65W,
-	  ADAPTER_TYPE_AC, CHARGER_TYPE_SVOOC },
+	{ 0x0,  0x0,   0,   0, ADAPTER_TYPE_AC,  CHARGER_TYPE_VOOC },
+	{ 0x1,  0x1,  20,   0, ADAPTER_TYPE_AC,  CHARGER_TYPE_VOOC },
+	{ 0x11, 0x12, 30,  50, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x13, 0x13, 20,   0, ADAPTER_TYPE_AC,  CHARGER_TYPE_VOOC },
+	{ 0x14, 0x14, 30,  65, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x15, 0x16, 20,   0, ADAPTER_TYPE_AC,  CHARGER_TYPE_VOOC },
+	{ 0x17, 0x19, 30,   0, ADAPTER_TYPE_AC,  CHARGER_TYPE_VOOC },
+	{ 0x1a, 0x1b, 15,  33, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x1c, 0x1e, 22,  44, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x21, 0x21, 30,  50, ADAPTER_TYPE_CAR, CHARGER_TYPE_SVOOC },
+	{ 0x23, 0x23, 30,  50, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x24, 0x27, 30,  55, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x28, 0x28, 30,  65, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x29, 0x29, 30,   0, ADAPTER_TYPE_CAR, CHARGER_TYPE_VOOC },
+	{ 0x2a, 0x2a, 30,  65, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x2b, 0x2b, 30,  66, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x2c, 0x2e, 30,  67, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x31, 0x31, 30,  50, ADAPTER_TYPE_PB,  CHARGER_TYPE_SVOOC },
+	{ 0x32, 0x32, 30, 120, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x33, 0x33, 30,  50, ADAPTER_TYPE_PB,  CHARGER_TYPE_SVOOC },
+	{ 0x34, 0x34, 20,  20, ADAPTER_TYPE_PB,  CHARGER_TYPE_NORMAL },
+	{ 0x35, 0x35, 30,  65, ADAPTER_TYPE_PB,  CHARGER_TYPE_SVOOC },
+	{ 0x36, 0x36, 30,  66, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x37, 0x3a, 30,  88, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x3b, 0x3e, 30, 100, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x41, 0x44, 30,   0, ADAPTER_TYPE_AC,  CHARGER_TYPE_VOOC },
+	{ 0x45, 0x45, 20,   0, ADAPTER_TYPE_AC,  CHARGER_TYPE_VOOC },
+	{ 0x46, 0x46, 30,   0, ADAPTER_TYPE_AC,  CHARGER_TYPE_VOOC },
+	{ 0x47, 0x48, 30, 120, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x49, 0x4a, 15,  33, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x4b, 0x4e, 30,  80, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x51, 0x51, 30, 125, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x61, 0x61, 15,  33, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x62, 0x62, 30,  50, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x63, 0x63, 30,  65, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x64, 0x64, 30,  66, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x65, 0x65, 30,  80, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x66, 0x66, 30,  65, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x67, 0x68, 30, 125, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x69, 0x6a, 30, 100, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x6b, 0x6b, 30, 120, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x6c, 0x6d, 30,  67, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
+	{ 0x6e, 0x6e, 30,  65, ADAPTER_TYPE_AC,  CHARGER_TYPE_SVOOC },
 };
 
 static void oplus_vooc_reset_temp_range(struct oplus_chg_vooc *chip);
@@ -363,13 +389,42 @@ __maybe_unused static bool is_err_topic_available(struct oplus_chg_vooc *chip)
 	return !!chip->err_topic;
 }
 
+static int find_current_to_level(int val, struct current_level *table, int len)
+{
+	int i = 0;
+
+	for (i = 0; i < len; i++) {
+		if (table[i].level == val)
+			return table[i].curr_ma;
+	}
+	return 0;
+}
+
+static int find_level_to_current(int val, struct current_level *table, int len)
+{
+	int i = 0;
+	bool find_out_flag = false;
+
+	for (i = 0; i < len; i++) {
+		if (table[i].curr_ma > val) {
+			find_out_flag = true;
+			break;
+		}
+		find_out_flag = false;
+	}
+	if (find_out_flag && i != 0)
+		return table[i - 1].level;
+
+	return 0;
+}
+
 static unsigned int oplus_get_adapter_sid(struct oplus_chg_vooc *chip,
 					  unsigned char id)
 {
 	struct oplus_adapter_struct *adapter_info;
 	enum oplus_adapter_chg_type adapter_chg_type;
 	int i;
-	unsigned int sid;
+	unsigned int sid, power;
 
 	for (i = 0; i < ARRAY_SIZE(adapter_id_table); i++) {
 		adapter_info = &adapter_id_table[i];
@@ -377,14 +432,27 @@ static unsigned int oplus_get_adapter_sid(struct oplus_chg_vooc *chip,
 			continue;
 		if (id >= adapter_info->id_min && id <= adapter_info->id_max) {
 			if (!chip->config.svooc_support &&
-			    adapter_info->adapter_chg_type ==
-				    CHARGER_TYPE_SVOOC)
+			    adapter_info->adapter_chg_type == CHARGER_TYPE_SVOOC) {
 				adapter_chg_type = CHARGER_TYPE_VOOC;
-			else
-				adapter_chg_type =
-					adapter_info->adapter_chg_type;
-			sid = adapter_info_to_sid(id, adapter_info->power_vooc,
-						  adapter_info->power_svooc,
+				power = adapter_info->power_vooc;
+			} else {
+				adapter_chg_type = adapter_info->adapter_chg_type;
+				switch (adapter_chg_type) {
+				case CHARGER_TYPE_UNKNOWN:
+				case CHARGER_TYPE_NORMAL:
+					power = 0;
+					break;
+				case CHARGER_TYPE_VOOC:
+					power = adapter_info->power_vooc;
+					break;
+				case CHARGER_TYPE_SVOOC:
+					power = adapter_info->power_svooc;
+					break;
+				}
+			}
+			if (power > chip->config.max_power_w)
+				power = chip->config.max_power_w;
+			sid = adapter_info_to_sid(id, power,
 						  adapter_info->adapter_type,
 						  adapter_chg_type);
 			chg_info("sid = 0x%08x\n", sid);
@@ -718,6 +786,8 @@ static bool oplus_fastchg_is_allow_retry(struct oplus_chg_vooc *chip)
 	case OPLUS_CHG_USB_TYPE_DCP:
 	case OPLUS_CHG_USB_TYPE_ACA:
 	case OPLUS_CHG_USB_TYPE_APPLE_BRICK_ID:
+	case OPLUS_CHG_USB_TYPE_SVOOC:
+	case OPLUS_CHG_USB_TYPE_VOOC:
 		break;
 	case OPLUS_CHG_USB_TYPE_PD:
 	case OPLUS_CHG_USB_TYPE_PD_PPS:
@@ -765,7 +835,7 @@ static void oplus_fastchg_check_retry(struct oplus_chg_vooc *chip)
 
 	if (chip->bat_temp_region >= TEMP_REGION_WARM &&
 	    temp_region <= TEMP_REGION_NORMAL &&
-	    temp_region <= TEMP_REGION_COOL) {
+	    temp_region >= TEMP_REGION_COOL) {
 		chg_info("drop to normal retry fastchg\n");
 		oplus_set_fast_status(chip, CHARGER_STATUS_TIMEOUT_RETRY);
 		vote(chip->vooc_disable_votable, TIMEOUT_VOTER, false, 0,
@@ -777,6 +847,7 @@ static void oplus_fastchg_check_retry(struct oplus_chg_vooc *chip)
 	chip->bat_temp_region = temp_region;
 }
 
+static bool oplus_vooc_is_allow_fast_chg(struct oplus_chg_vooc *chip);
 static void
 oplus_vooc_fastchg_allow_or_enable_check(struct oplus_chg_vooc *chip)
 {
@@ -861,7 +932,7 @@ enable_check:
 	}
 
 	if (is_client_vote_enabled(chip->vooc_disable_votable,
-				   SWITCH_RANGE_VOTER)) {
+	    SWITCH_RANGE_VOTER) && oplus_vooc_is_allow_fast_chg(chip)) {
 		vote(chip->vooc_disable_votable, SWITCH_RANGE_VOTER, false, 0,
 		     false);
 	}
@@ -874,6 +945,10 @@ static bool oplus_vooc_is_allow_fast_chg(struct oplus_chg_vooc *chip)
 	struct oplus_vooc_spec_config *spec = &chip->spec;
 	bool fastchg_to_warm_full = false;
 	int warmfull_fastchg_temp = 0;
+	union mms_msg_data data = { 0 };
+
+	oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_SOC, &data, true);
+	chip->soc = data.intval;
 
 	if (chip->temperature < spec->vooc_low_temp ||
 	    chip->temperature > spec->vooc_high_temp) {
@@ -1832,6 +1907,9 @@ static int oplus_vooc_push_break_code(struct oplus_chg_vooc *chip, int code)
 	struct mms_msg *msg;
 	int rc;
 
+	if (chip->vooc_ic->type == OPLUS_CHG_IC_VIRTUAL_VPHY)
+		return 0;
+
 	msg = oplus_mms_alloc_int_msg(MSG_TYPE_ITEM, MSG_PRIO_MEDIUM,
 				      VOOC_ITEM_BREAK_CODE, code);
 	if (msg == NULL) {
@@ -1920,35 +1998,29 @@ static void oplus_vooc_fastchg_work(struct work_struct *work)
 	bool ignore_device_type = false;
 	bool charger_delay_check = false;
 	bool data_err = false;
-	int bit = 0;
 	int data = 0;
 	int ret_info = 0, ret_tmp;
-	int i, rc;
+	int rc;
 	char buf[1] = { 0 };
 
 	usleep_range(2000, 2000);
 	/* TODO: check data gpio val */
-
 	oplus_vooc_eint_unregister(chip->vooc_ic);
-	for (i = 0; i < 7; i++) {
-		bit = oplus_vooc_read_ap_data(chip->vooc_ic);
-		data |= bit << (6 - i);
-		if ((i == 2) && (data != 0x50) && (!fw_ver_info) &&
-		    (!adapter_fw_ver_info) &&
-		    (!adapter_model_factory)) { /*data recvd not start from "101"*/
-			chg_err("data err:0x%x\n", data);
-			if (chip->fastchg_started) {
-				/* TODO clean fast charge flag */
-				oplus_set_fast_status(chip,
-						      CHARGER_STATUS_UNKNOWN);
-				oplus_vooc_push_break_code(
-					chip, TRACK_MCU_VOOCPHY_DATA_ERROR);
-				oplus_vooc_fastchg_exit(chip, true);
-				data_err = true;
-			}
-			goto out;
+	data = oplus_vooc_read_ap_data(chip->vooc_ic);
+	if (((data & 0xf0) != 0x50) && (!fw_ver_info) &&
+	    (!adapter_fw_ver_info) && (!adapter_model_factory)) {
+		/* data recvd not start from "101" */
+		chg_err("data err:0x%x\n", data);
+		if (chip->fastchg_started) {
+			/* TODO clean fast charge flag */
+			oplus_set_fast_status(chip, CHARGER_STATUS_UNKNOWN);
+			oplus_vooc_push_break_code(chip, TRACK_MCU_VOOCPHY_DATA_ERROR);
+			oplus_vooc_fastchg_exit(chip, true);
+			data_err = true;
 		}
+			goto out;
 	}
+
 	chg_info("recv data: 0x%02x\n", data);
 
 	switch (data) {
@@ -2192,11 +2264,13 @@ static void oplus_vooc_fastchg_work(struct work_struct *work)
 	chg_info("ret_info=0x%02x\n", ret_info);
 	if (ignore_device_type)
 		oplus_vooc_reply_data_no_type(chip->vooc_ic, ret_info,
-					      chip->config.data_width);
+					      chip->config.data_width,
+					      get_effective_result(chip->vooc_curr_votable));
 	else
 		oplus_vooc_reply_data(chip->vooc_ic, ret_info,
 				      oplus_gauge_get_device_type_for_vooc(),
-				      chip->config.data_width);
+				      chip->config.data_width,
+				      get_effective_result(chip->vooc_curr_votable));
 
 	if (data == VOOC_NOTIFY_LOW_TEMP_FULL) {
 		chg_err("after 0x53, get bcc curve\n");
@@ -2266,6 +2340,16 @@ static void oplus_vooc_wired_subs_callback(struct mms_subscribe *subs,
 			if (chip->cc_detect == CC_DETECT_NOTPLUG)
 				oplus_chg_clear_abnormal_adapter_var(chip);
 			break;
+		case WIRED_TIME_TYPEC_STATE:
+			oplus_mms_get_item_data(chip->wired_topic,
+						WIRED_TIME_TYPEC_STATE, &data,
+						false);
+			chip->typec_state = data.intval;
+			if (chip->typec_state == 0) {
+				oplus_chg_clear_abnormal_adapter_var(chip);
+			}
+			break;
+
 		case WIRED_ITEM_PRESENT:
 			schedule_work(&chip->abnormal_adapter_check_work);
 			break;
@@ -2313,6 +2397,9 @@ static void oplus_vooc_subscribe_wired_topic(struct oplus_mms *topic,
 	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_CC_DETECT, &data,
 				true);
 	chip->cc_detect = data.intval;
+	oplus_mms_get_item_data(chip->wired_topic, WIRED_TIME_TYPEC_STATE, &data,
+				true);
+	chip->typec_state = data.intval;
 }
 
 static void oplus_vooc_plugin_work(struct work_struct *work)
@@ -2320,16 +2407,22 @@ static void oplus_vooc_plugin_work(struct work_struct *work)
 	struct oplus_chg_vooc *chip =
 		container_of(work, struct oplus_chg_vooc, plugin_work);
 	union mms_msg_data data = { 0 };
+	int ret = 0;
 
 	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_ONLINE, &data,
 				false);
 	chip->wired_online = data.intval;
 	if (chip->wired_online) {
 		if (chip->comm_topic != NULL) {
-			oplus_mms_get_item_data(chip->comm_topic,
+			ret = oplus_mms_get_item_data(chip->comm_topic,
 						COMM_ITEM_TEMP_REGION, &data,
-						false);
-			chip->bat_temp_region = data.intval;
+						true);
+			if (ret < 0) {
+				chip->bat_temp_region = TEMP_REGION_NORMAL;
+				chg_err("can't get COMM_ITEM_TEMP_REGION status, ret=%d", ret);
+			} else {
+				chip->bat_temp_region = data.intval;
+			}
 		} else {
 			chip->bat_temp_region = TEMP_REGION_MAX;
 		}
@@ -2369,6 +2462,10 @@ static void oplus_vooc_plugin_work(struct work_struct *work)
 		/* USER_VOTER and HIDL_VOTER need to be invalid when the usb is unplugged */
 		vote(chip->vooc_curr_votable, USER_VOTER, false, 0, false);
 		vote(chip->vooc_curr_votable, HIDL_VOTER, false, 0, false);
+		vote(chip->vooc_chg_auto_mode_votable, CHARGE_SUSPEND_VOTER,
+		     false, 0, false);
+		vote(chip->vooc_chg_auto_mode_votable, CHAEGE_DISABLE_VOTER,
+		     false, 0, false);
 		if (oplus_chg_vooc_get_switch_mode(chip->vooc_ic) !=
 		    VOOC_SWITCH_MODE_NORMAL) {
 			switch_normal_chg(chip->vooc_ic);
@@ -2536,6 +2633,11 @@ static void oplus_vooc_subscribe_comm_topic(struct oplus_mms *topic,
 		return;
 	}
 
+	chg_err("init parameters");
+	oplus_mms_get_item_data(chip->comm_topic,
+				COMM_ITEM_TEMP_REGION, &data,
+				true);
+	chip->bat_temp_region = data.intval;
 	oplus_mms_get_item_data(chip->comm_topic, COMM_ITEM_COOL_DOWN, &data,
 				true);
 	chip->cool_down = data.intval;
@@ -2694,8 +2796,6 @@ static void oplus_vooc_subscribe_gauge_topic(struct oplus_mms *topic,
 	oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_CURR, &data,
 				true);
 	chip->icharging = data.intval;
-	oplus_mms_get_item_data(chip->gauge_topic, GAUGE_ITEM_SOC, &data, true);
-	chip->soc = data.intval;
 
 	(void)oplus_vooc_is_allow_fast_chg(chip);
 }
@@ -3541,6 +3641,24 @@ static int oplus_vooc_pd_svooc_vote_callback(struct votable *votable,
 	return 0;
 }
 
+static int oplus_vooc_chg_auto_mode_vote_callback(struct votable *votable,
+						  void *data, int enable,
+						  const char *client, bool step)
+{
+	struct oplus_chg_vooc *chip = data;
+	int rc;
+
+	rc = set_chg_auto_mode(chip->vooc_ic, enable);
+	if (rc)
+		chg_err("falied to %s %s chg auto mode, rc= %d\n", client,
+			 enable ? "enable" : "disable", rc);
+	else
+		chg_info("%s %s chg auto mode\n", client,
+			 enable ? "enable" : "disable");
+
+	return rc;
+}
+
 static int oplus_vooc_vote_init(struct oplus_chg_vooc *chip)
 {
 	int rc;
@@ -3580,7 +3698,18 @@ static int oplus_vooc_vote_init(struct oplus_chg_vooc *chip)
 		goto creat_pd_svooc_votable_err;
 	}
 
+	chip->vooc_chg_auto_mode_votable =
+		create_votable("VOOC_CHG_AUTO_MODE", VOTE_SET_ANY,
+			       oplus_vooc_chg_auto_mode_vote_callback, chip);
+	if (IS_ERR(chip->vooc_chg_auto_mode_votable)) {
+		rc = PTR_ERR(chip->vooc_chg_auto_mode_votable);
+		chip->vooc_chg_auto_mode_votable = NULL;
+		goto creat_vooc_chg_auto_mode_votable_err;
+	}
+
 	return 0;
+creat_vooc_chg_auto_mode_votable_err:
+	destroy_votable(chip->pd_svooc_votable);
 creat_pd_svooc_votable_err:
 	destroy_votable(chip->vooc_not_allow_votable);
 creat_not_allow_votable_err:
@@ -3791,6 +3920,20 @@ static int oplus_vooc_parse_dt(struct oplus_chg_vooc *chip)
 		config->max_curr_level = CURR_LIMIT_7BIT_6_3A;
 	} else {
 		config->max_curr_level = (uint8_t)data;
+	}
+	rc = of_property_read_u32(node, "oplus,vooc_power_max_w", &data);
+	if (rc < 0) {
+		chg_err("oplus,vooc_power_max_w reading failed, rc=%d\n", rc);
+		config->max_power_w = 65;
+	} else {
+		config->max_power_w = (uint32_t)data;
+	}
+	rc = of_property_read_u32(node, "oplus,voocphy_support", &data);
+	if (rc < 0) {
+		chg_err("oplus,voocphy_support reading failed, rc=%d\n", rc);
+		config->voocphy_support = NO_VOOCPHY;
+	} else {
+		config->voocphy_support = (uint8_t)data;
 	}
 	rc = of_property_read_u32(node, "oplus,vooc_project", &data);
 	if (rc < 0) {
@@ -4056,6 +4199,7 @@ proc_init_err:
 		oplus_chg_strategy_release(chip->general_strategy);
 strategy_init_err:
 topic_init_err:
+	destroy_votable(chip->vooc_chg_auto_mode_votable);
 	destroy_votable(chip->pd_svooc_votable);
 	destroy_votable(chip->vooc_not_allow_votable);
 	destroy_votable(chip->vooc_disable_votable);
@@ -4086,6 +4230,7 @@ static int oplus_vooc_remove(struct platform_device *pdev)
 	destroy_votable(chip->vooc_not_allow_votable);
 	destroy_votable(chip->vooc_disable_votable);
 	destroy_votable(chip->vooc_curr_votable);
+	destroy_votable(chip->vooc_chg_auto_mode_votable);
 	if (chip->config.strategy_data)
 		devm_kfree(&pdev->dev, chip->config.strategy_data);
 	devm_kfree(&pdev->dev, chip);
@@ -4133,12 +4278,15 @@ uint32_t oplus_vooc_get_project(struct oplus_mms *topic)
 	return chip->config.vooc_project;
 }
 
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-
-int oplus_vooc_set_config(struct oplus_mms *topic,
-			  struct oplus_chg_param_head *param_head)
+uint32_t oplus_vooc_get_voocphy_support(struct oplus_mms *topic)
 {
-	return 0;
+	struct oplus_chg_vooc *chip;
+
+	if (topic == NULL)
+		return 0;
+	chip = oplus_mms_get_drvdata(topic);
+
+	return chip->config.voocphy_support;
 }
 
 /*TODO*/
@@ -4177,8 +4325,6 @@ void oplus_api_vooc_turn_off_fastchg(struct oplus_mms *topic)
 	oplus_turn_off_fastchg(chip);
 	return;
 }
-
-#endif /* CONFIG_OPLUS_CHG_DYNAMIC_CONFIG */
 
 static bool oplus_vooc_get_bcc_support(struct oplus_chg_vooc *chip)
 {
@@ -4776,7 +4922,6 @@ static int oplus_vooc_get_ffc_status(void)
 	if (!rc)
 		ffc_status = data.intval;
 
-	chg_err("%s, get ffc status = %d\n", __func__, ffc_status);
 	return ffc_status;
 }
 
@@ -4887,4 +5032,65 @@ static int oplus_vooc_afi_update_condition(struct oplus_mms *topic,
 
 	data->intval = afi_condition;
 	return 0;
+}
+
+int oplus_vooc_current_to_level(struct oplus_mms *topic, int curr)
+{
+	struct oplus_chg_vooc *chip;
+	int level = 0;
+
+	if (topic == NULL) {
+		chg_err("topic is NULL\n");
+		return -ENODEV;
+	}
+	chip = oplus_mms_get_drvdata(topic);
+
+	if (curr == 0)
+		return level;
+
+	/* TODO: add adsp voocphy check */
+	if (chip->config.data_width == 7)
+		level = find_level_to_current(curr, svooc_2_0_curr_table, ARRAY_SIZE(svooc_2_0_curr_table));
+	else
+		level = curr / 1000;
+
+	return level;
+}
+
+int oplus_vooc_level_to_current(struct oplus_mms *topic, int level)
+{
+	struct oplus_chg_vooc *chip;
+	int curr = 0;
+
+	if (topic == NULL) {
+		chg_err("topic is NULL\n");
+		return -ENODEV;
+	}
+	chip = oplus_mms_get_drvdata(topic);
+
+	if (level == 0)
+		return 0;
+
+	/* TODO: add adsp voocphy check */
+	if (chip->config.data_width == 7)
+		curr = find_current_to_level(level, svooc_2_0_curr_table, ARRAY_SIZE(svooc_2_0_curr_table));
+
+	return curr;
+}
+
+int oplus_vooc_get_batt_curve_current(struct oplus_mms *topic)
+{
+	struct oplus_chg_vooc *chip;
+	int curr = 0;
+
+	if (topic == NULL) {
+		chg_err("topic is NULL\n");
+		return -ENODEV;
+	}
+	chip = oplus_mms_get_drvdata(topic);
+
+	/* TODO: add voocphy curve_current support */
+	curr = -chip->icharging;
+
+	return curr;
 }

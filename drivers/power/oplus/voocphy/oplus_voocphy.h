@@ -15,6 +15,9 @@
 #include <linux/hrtimer.h>
 #include <linux/slab.h>
 #include "../oplus_chg_track.h"
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+#include <oplus_cfg.h>
+#endif
 
 enum {
 	ADC_AUTO_MODE,
@@ -477,6 +480,12 @@ enum {
 	CHIP_ID_HL7138,
 };
 
+enum oplus_voocphy_ovp_ctrl {
+	MASTER_CP_ID,
+	SLAVE_CP_ID,
+	INVALID_CP_ID,
+};
+
 struct oplus_voocphy_manager {
 	struct i2c_client *client;
 	struct device *dev;
@@ -497,6 +506,10 @@ struct oplus_voocphy_manager {
 
 	struct pinctrl_state *charger_gpio_sw_ctrl2_high;
 	struct pinctrl_state *charger_gpio_sw_ctrl2_low;
+
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+	struct oplus_cfg debug_cfg;
+#endif
 
 	bool voocphy_dual_cp_support;
 	bool voocphy_bidirect_cp_support;
@@ -586,8 +599,6 @@ struct oplus_voocphy_manager {
 	unsigned int vooc_cool_down_num;
 	unsigned int current_default;
 	unsigned int current_expect;
-	unsigned int current_bcc_max;
-	unsigned int current_bcc_min;
 	unsigned int current_bcc_ext;
 	unsigned int current_max;
 	unsigned int current_spec;
@@ -657,6 +668,7 @@ struct oplus_voocphy_manager {
 	bool fastchg_start;
 	bool fastchg_to_normal;
 	bool fastchg_to_warm;
+	bool adspvoocphy_fastchg_start;
 	bool fastchg_to_warm_full;
 	int fast_chg_type;
 	int last_fast_chg_type;
@@ -693,6 +705,7 @@ struct oplus_voocphy_manager {
 	struct delayed_work voocphy_check_charger_out_work;
 	struct delayed_work check_chg_out_work;
 	struct delayed_work clear_boost_work;
+	struct delayed_work check_disable_chg_work;
 	atomic_t  voocphy_freq_state;
 	int voocphy_freq_mincore;
 	int voocphy_freq_midcore;
@@ -816,6 +829,7 @@ struct oplus_voocphy_manager {
 	bool high_curr_setting;
 	bool copycat_vooc_support;
 	int chip_id;
+	enum oplus_voocphy_ovp_ctrl ovp_ctrl_cpindex;
 };
 
 struct oplus_voocphy_operations {
@@ -849,11 +863,13 @@ struct oplus_voocphy_operations {
 	int (*clear_interrupts)(struct oplus_voocphy_manager *chip);
 	int (*get_voocphy_enable)(struct oplus_voocphy_manager *chip, u8 *data);
 	void (*dump_voocphy_reg)(struct oplus_voocphy_manager *chip);
+	int (*upload_cp_error)(struct oplus_voocphy_manager *chip, int err_type);
 	int (*set_dpdm_enable)(struct oplus_voocphy_manager *chip, bool enable);
 	int (*adsp_reset_voocphy)(void);
 	int (*get_chip_id)(void);
 	int (*adsp_force_svooc)(bool enable);
 	int (*get_adsp_voocphy_enable)(void);
+	int (*reset_voocphy_ovp)(struct oplus_voocphy_manager *chip);
 };
 
 #define VOOCPHY_LOG_BUF_LEN 1024
@@ -891,6 +907,8 @@ bool oplus_voocphy_get_fastchg_commu_ing(void);
 bool oplus_voocphy_get_fastchg_start(void);
 bool oplus_voocphy_get_fastchg_to_normal(void);
 bool oplus_voocphy_get_fastchg_to_warm(void);
+bool oplus_adsp_voocphy_get_fastchg_start(void);
+void oplus_adsp_voocphy_set_fastchg_start(bool status);
 bool oplus_voocphy_get_fastchg_dummy_start(void);
 int oplus_voocphy_get_fast_chg_type(void);
 int oplus_voocphy_slave_get_chg_enable(struct oplus_voocphy_manager *chip, u8 *data);
@@ -937,7 +955,7 @@ void oplus_voocphy_set_detach_unexpectly(bool val);
 int oplus_voocphy_enter_ship_mode(void);
 int oplus_voocphy_adjust_current_by_cool_down(int val);
 bool oplus_voocphy_get_btb_temp_over(void);
-
+int oplus_voocphy_upload_cp_error(int err_type);
 bool oplus_is_voocphy_charging(void);
 void oplus_voocphy_set_bcc_current(int val);
 int oplus_voocphy_get_bcc_max_curr(void);
@@ -950,5 +968,6 @@ int oplus_voocphy_get_batt_curve_current(void);
 void oplus_adsp_voocphy_force_svooc(int enable);
 int oplus_get_adsp_voocphy_enable(void);
 int oplus_voocphy_get_last_fast_chg_type(void);
+int oplus_voocphy_chg_out_check_event_handle(unsigned long data);
 void oplus_voocphy_clear_last_fast_chg_type(void);
 #endif /* _OPLUS_VOOCPHY_H_ */

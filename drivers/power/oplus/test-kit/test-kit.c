@@ -12,6 +12,7 @@
 #include <linux/err.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/version.h>
 #include <linux/of.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
@@ -373,7 +374,11 @@ EXPORT_SYMBOL(test_kit_unreg_mtk_spmi_gpio_check);
 bool test_kit_mtk_gpio_check(void *info, char *buf, size_t len, size_t *use_size)
 {
 #if IS_ENABLED(CONFIG_PINCTRL_MTK_V2)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
+	const char *pinctrl_name = "pinctrl_paris";
+#else
 	const char *pinctrl_name = "pinctrl_mtk_v2";
+#endif
 	struct test_kit_soc_gpio_info *gpio_info = info;
 	unsigned int pin = ARCH_NR_GPIOS - 1;
 	struct gpio_desc *gdesc = NULL;
@@ -404,7 +409,7 @@ bool test_kit_mtk_gpio_check(void *info, char *buf, size_t len, size_t *use_size
 
 	if (!gpio_is_valid(offset)) {
 		pr_err("[GPIO-CHECK]: gpio is unvalid\n");
-		return true;
+		return false;
 	}
 
 	do {
@@ -435,43 +440,6 @@ bool test_kit_mtk_gpio_check(void *info, char *buf, size_t len, size_t *use_size
 
 	desc = (const struct mtk_pin_desc *)&hw->soc->pins[offset];
 
-	ret = mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_DIR, &val);
-	if (ret || val != gpio_info->is_out) {
-		*use_size += snprintf(buf + *use_size, len - *use_size,
-			"[%s][gpio%u][direction error]:expected:%s, actually:%s\n",
-			gpio_info->name, offset,
-			gpio_info->is_out ? "out" : "in",
-			ret ? "null" : (val ? "out" : "in"));
-		pass = false;
-	}
-	if (!ret && val == false) {
-		ret = mtk_pinconf_bias_get_combo(hw, desc, &val_pullsel, &val_pullen);
-		if (ret) {
-			*use_size += snprintf(buf + *use_size, len - *use_size,
-			"[%s][gpio%u][pull error]:expected:%s, actually:%s\n",
-			gpio_info->name, offset,
-			pulls_no_keeper[gpio_info->pull],
-			"null");
-			pass = false;
-		}
-		else if (!val_pullen) {
-			*use_size += snprintf(buf + *use_size, len - *use_size,
-				"[%s][gpio%u][pull error]:expected:%s, actually:%s\n",
-				gpio_info->name, offset,
-				pulls_no_keeper[gpio_info->pull],
-				pulls_no_keeper[0]);
-			pass = false;
-		}
-		else if (val_pullsel + 1 != gpio_info->pull) {
-			*use_size += snprintf(buf + *use_size, len - *use_size,
-				"[%s][gpio%u][pull error]:expected:%s, actually:%s\n",
-				gpio_info->name, offset,
-				pulls_no_keeper[gpio_info->pull],
-				pulls_no_keeper[val_pullsel + 1]);
-			pass = false;
-		}
-	}
-
 	ret = mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_DO, &val);
 	if (ret || !!val != gpio_info->is_high) {
 		*use_size += snprintf(buf + *use_size, len - *use_size,
@@ -493,12 +461,66 @@ bool test_kit_mtk_gpio_check(void *info, char *buf, size_t len, size_t *use_size
 	ret = mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_DRV, &val);
 	if (!ret)
 		val = 2 + 2*val;
-	if (ret || val != gpio_info->drive) {
+	if (ret || val < gpio_info->drive) {
 		*use_size += snprintf(buf + *use_size, len - *use_size,
 			"[%s][gpio%u][drive error]:expected:%dmA, actually:%dmA\n",
 			gpio_info->name, offset, gpio_info->drive,
 			ret ? -1 : val);
 		pass = false;
+	}
+
+	ret = mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_DIR, &val);
+	if (ret) {
+		*use_size += snprintf(buf + *use_size, len - *use_size,
+			"[%s][gpio%u][direction error]:expected:%s, actually:%s\n",
+			gpio_info->name, offset,
+			gpio_info->is_out ? "out" : "in",
+			"null");
+		return false;
+	}
+
+	if (val != gpio_info->is_out) {
+		*use_size += snprintf(buf + *use_size, len - *use_size,
+			"[%s][gpio%u][direction error]:expected:%s, actually:%s\n",
+			gpio_info->name, offset,
+			gpio_info->is_out ? "out" : "in",
+			val ? "out" : "in");
+		return false;
+	}
+
+	if (!gpio_info->is_out) {
+		ret = mtk_pinconf_bias_get_combo(hw, desc, &val_pullsel, &val_pullen);
+		if (ret) {
+			*use_size += snprintf(buf + *use_size, len - *use_size,
+			"[%s][gpio%u][pull error]:expected:%s, actually:%s\n",
+			gpio_info->name, offset,
+			pulls_no_keeper[gpio_info->pull],
+			"null");
+			pass = false;
+		} else if (!gpio_info->pull) {
+			if (val_pullen) {
+				*use_size += snprintf(buf + *use_size, len - *use_size,
+					"[%s][gpio%u][pull error]:expected:%s, actually:%s\n",
+					gpio_info->name, offset,
+					pulls_no_keeper[gpio_info->pull],
+					pulls_no_keeper[val_pullsel + 1]);
+				pass = false;
+			}
+		} else if (!val_pullen) {
+			*use_size += snprintf(buf + *use_size, len - *use_size,
+				"[%s][gpio%u][pull error]:expected:%s, actually:%s\n",
+				gpio_info->name, offset,
+				pulls_no_keeper[gpio_info->pull],
+				pulls_no_keeper[0]);
+			pass = false;
+		} else if (gpio_info->pull != val_pullsel + 1) {
+			*use_size += snprintf(buf + *use_size, len - *use_size,
+				"[%s][gpio%u][pull error]:expected:%s, actually:%s\n",
+				gpio_info->name, offset,
+				pulls_no_keeper[gpio_info->pull],
+				pulls_no_keeper[val_pullsel + 1]);
+			pass = false;
+		}
 	}
 
 	return pass;
