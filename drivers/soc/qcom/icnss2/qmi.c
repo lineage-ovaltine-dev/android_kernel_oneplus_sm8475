@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #define pr_fmt(fmt) "icnss2_qmi: " fmt
@@ -31,6 +31,12 @@
 #include "qmi.h"
 #include "debug.h"
 #include "genl.h"
+#ifdef OPLUS_FEATURE_WIFI_BDF
+//Modify for: multi projects using different bdf
+#include <linux/fs.h>
+#include <asm/uaccess.h>
+#include <soc/oplus/system/oplus_project.h>
+#endif /* OPLUS_FEATURE_WIFI_BDF */
 
 #define WLFW_SERVICE_WCN_INS_ID_V01	3
 #define WLFW_SERVICE_INS_ID_V01		0
@@ -53,9 +59,6 @@
 #define DMS_MAC_NOT_PROVISIONED		16
 #define BDWLAN_SIZE			6
 #define UMC_CHIP_ID                    0x4320
-#define MAX_SHADOW_REG_RESERVED		2
-#define MAX_NUM_SHADOW_REG_V3		(QMI_WLFW_MAX_NUM_SHADOW_REG_V3_USAGE_V01 - \
-					MAX_SHADOW_REG_RESERVED)
 
 #ifdef CONFIG_ICNSS2_DEBUG
 bool ignore_fw_timeout;
@@ -547,8 +550,7 @@ int wlfw_ind_register_send_sync_msg(struct icnss_priv *priv)
 			req->rejuvenate_enable_valid = 1;
 			req->rejuvenate_enable = 1;
 		}
-	} else if (priv->device_id == WCN6750_DEVICE_ID ||
-		   priv->device_id == WCN6450_DEVICE_ID) {
+	} else if (priv->device_id == WCN6750_DEVICE_ID) {
 		req->fw_init_done_enable_valid = 1;
 		req->fw_init_done_enable = 1;
 		req->cal_done_enable_valid = 1;
@@ -881,6 +883,10 @@ int icnss_wlfw_wlan_mac_req_send_sync(struct icnss_priv *priv,
 	struct wlfw_mac_addr_resp_msg_v01 resp = {0};
 	struct qmi_txn txn;
 	int ret;
+#ifdef OPLUS_FEATURE_WIFI_BDF
+    int i;
+    char revert_mac[QMI_WLFW_MAC_ADDR_SIZE_V01];
+#endif /* OPLUS_FEATURE_WIFI_BDF */
 
 	if (!priv || !mac || mac_len != QMI_WLFW_MAC_ADDR_SIZE_V01)
 		return -EINVAL;
@@ -896,7 +902,17 @@ int icnss_wlfw_wlan_mac_req_send_sync(struct icnss_priv *priv,
 
 	icnss_pr_dbg("Sending WLAN mac req [%pM], state: 0x%lx\n",
 			     mac, priv->state);
-	memcpy(req.mac_addr, mac, mac_len);
+#ifdef OPLUS_FEATURE_WIFI_BDF
+    for (i = 0; i < QMI_WLFW_MAC_ADDR_SIZE_V01 ; i ++){
+        revert_mac[i] = mac[QMI_WLFW_MAC_ADDR_SIZE_V01 - i -1];
+    }
+        icnss_pr_dbg("Sending revert WLAN mac req [%pM], state: 0x%lx\n",
+                revert_mac, priv->state);
+    memcpy(req.mac_addr, revert_mac, mac_len);
+#else
+    memcpy(req.mac_addr, mac, mac_len);
+#endif /* OPLUS_FEATURE_WIFI_BDF */
+
 	req.mac_addr_valid = 1;
 
 	ret = qmi_send_request(&priv->qmi, NULL, &txn,
@@ -1118,6 +1134,15 @@ int icnss_wlfw_bdf_dnld_send_sync(struct icnss_priv *priv, u32 bdf_type)
 	temp = fw_entry->data;
 	remaining = fw_entry->size;
 
+
+#ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+    //Add for: check fw status for switch issue
+    if (bdf_type == ICNSS_BDF_REGDB) {
+        set_bit(CNSS_LOAD_REGDB_SUCCESS, &priv->loadRegdbState);
+    } else if (bdf_type == ICNSS_BDF_ELF){
+        set_bit(CNSS_LOAD_BDF_SUCCESS, &priv->loadBdfState);
+    }
+#endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
 	icnss_pr_dbg("Downloading %s: %s, size: %u\n",
 		     icnss_bdf_type_to_str(bdf_type), filename, remaining);
 
@@ -1191,6 +1216,14 @@ int icnss_wlfw_bdf_dnld_send_sync(struct icnss_priv *priv, u32 bdf_type)
 err_send:
 	release_firmware(fw_entry);
 err_req_fw:
+#ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+    //Add for: check fw status for switch issue
+    if (bdf_type == ICNSS_BDF_REGDB) {
+        set_bit(CNSS_LOAD_REGDB_FAIL, &priv->loadRegdbState);
+    } else if (bdf_type == ICNSS_BDF_ELF){
+        set_bit(CNSS_LOAD_BDF_FAIL, &priv->loadBdfState);
+    }
+#endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
 	if (bdf_type != ICNSS_BDF_REGDB)
 		ICNSS_QMI_ASSERT();
 	kfree(req);
@@ -1273,8 +1306,7 @@ int icnss_wlfw_qdss_data_send_sync(struct icnss_priv *priv, char *file_name,
 		     resp->total_size == total_size) &&
 		    (resp->seg_id_valid == 1 && resp->seg_id == req->seg_id) &&
 		    (resp->data_valid == 1 &&
-		     resp->data_len <= QMI_WLFW_MAX_DATA_SIZE_V01) &&
-		    resp->data_len <= remaining) {
+		     resp->data_len <= QMI_WLFW_MAX_DATA_SIZE_V01)) {
 			memcpy(p_qdss_trace_data_temp,
 			       resp->data, resp->data_len);
 		} else {
@@ -2168,7 +2200,7 @@ int wlfw_qdss_trace_mem_info_send_sync(struct icnss_priv *priv)
 
 	req->mem_seg_len = priv->qdss_mem_seg_len;
 
-	if (priv->qdss_mem_seg_len >  QMI_WLFW_MAX_NUM_MEM_SEG_V01) {
+	if (priv->qdss_mem_seg_len > QMI_WLFW_MAX_NUM_MEM_SEG) {
 		icnss_pr_err("Invalid seg len %u\n",
 			     priv->qdss_mem_seg_len);
 		ret = -EINVAL;
@@ -2567,7 +2599,7 @@ static void wlfw_qdss_trace_req_mem_ind_cb(struct qmi_handle *qmi,
 
 	priv->qdss_mem_seg_len = ind_msg->mem_seg_len;
 
-	if (priv->qdss_mem_seg_len > QMI_WLFW_MAX_NUM_MEM_SEG_V01) {
+	if (priv->qdss_mem_seg_len > QMI_WLFW_MAX_NUM_MEM_SEG) {
 		icnss_pr_err("Invalid seg len %u\n",
 			     priv->qdss_mem_seg_len);
 		return;
@@ -2971,8 +3003,7 @@ int icnss_register_fw_service(struct icnss_priv *priv)
 	if (ret < 0)
 		return ret;
 
-	if (priv->device_id == WCN6750_DEVICE_ID ||
-	    priv->device_id == WCN6450_DEVICE_ID)
+	if (priv->device_id == WCN6750_DEVICE_ID)
 		ret = qmi_add_lookup(&priv->qmi, WLFW_SERVICE_ID_V01,
 				     WLFW_SERVICE_VERS_V01,
 				     WLFW_SERVICE_WCN_INS_ID_V01);
@@ -3063,17 +3094,6 @@ int icnss_send_wlan_enable_to_fw(struct icnss_priv *priv,
 
 		memcpy(req.shadow_reg, config->shadow_reg_cfg,
 		       sizeof(struct wlfw_msi_cfg_s_v01) * req.shadow_reg_len);
-	} else if (priv->device_id == WCN6450_DEVICE_ID) {
-		req.shadow_reg_v3_valid = 1;
-		if (config->num_shadow_reg_v3_cfg >
-			MAX_NUM_SHADOW_REG_V3)
-			req.shadow_reg_v3_len = MAX_NUM_SHADOW_REG_V3;
-		else
-			req.shadow_reg_v3_len = config->num_shadow_reg_v3_cfg;
-
-		memcpy(req.shadow_reg_v3, config->shadow_reg_v3_cfg,
-		       sizeof(struct wlfw_shadow_reg_v3_cfg_s_v01)
-		       * req.shadow_reg_v3_len);
 	}
 
 	ret = wlfw_wlan_cfg_send_sync_msg(priv, &req);

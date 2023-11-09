@@ -2,7 +2,6 @@
 /*
  * Copyright (c) 2017-2020, 2021, The Linux Foundation.
  * All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __MAIN_H__
@@ -21,14 +20,13 @@
 #include <linux/timer.h>
 
 #define WCN6750_DEVICE_ID 0x6750
-#define WCN6450_DEVICE_ID 0x6450
 #define ADRASTEA_DEVICE_ID 0xabcd
+#define QMI_WLFW_MAX_NUM_MEM_SEG 32
 #define THERMAL_NAME_LENGTH 20
 #define ICNSS_SMEM_VALUE_MASK 0xFFFFFFFF
 #define ICNSS_SMEM_SEQ_NO_POS 16
 #define QCA6750_PATH_PREFIX    "qca6750/"
 #define ADRASTEA_PATH_PREFIX   "adrastea/"
-#define WCN6450_PATH_PREFIX    "wcn6450/"
 #define ICNSS_MAX_FILE_NAME      35
 #define ICNSS_PCI_EP_WAKE_OFFSET 4
 #define ICNSS_DISABLE_M3_SSR 0
@@ -46,10 +44,6 @@ struct icnss_control_params {
 	unsigned long quirks;
 	unsigned int qmi_timeout;
 	unsigned int bdf_type;
-	unsigned int recovery_timeout;
-	unsigned int soc_wake_timeout;
-	unsigned int cal_timeout;
-	unsigned int wpss_ssr_timeout;
 };
 
 enum icnss_driver_event_type {
@@ -472,7 +466,7 @@ struct icnss_priv {
 	struct rproc *rproc;
 	atomic_t is_shutdown;
 	u32 qdss_mem_seg_len;
-	struct icnss_fw_mem qdss_mem[QMI_WLFW_MAX_NUM_MEM_SEG_V01];
+	struct icnss_fw_mem qdss_mem[QMI_WLFW_MAX_NUM_MEM_SEG];
 	void *get_info_cb_ctx;
 	int (*get_info_cb)(void *ctx, void *event, int event_len);
 	atomic_t soc_wake_ref_count;
@@ -508,9 +502,26 @@ struct icnss_priv {
 	u32 pof_pinctrl_owners;
 	bool pon_in_progress;
 	struct timer_list recovery_timer;
+#ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+//Add for: check fw status for switch issue
+	unsigned long loadBdfState;
+	unsigned long loadRegdbState;
+#endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
 	struct timer_list wpss_ssr_timer;
 	bool wpss_self_recovery_enabled;
 };
+
+#ifdef OPLUS_FEATURE_WIFI_DCS_SWITCH
+//Add for: check fw status for switch issue
+enum cnss_load_state {
+	CNSS_LOAD_BDF_FAIL = 1,
+	CNSS_LOAD_BDF_SUCCESS,
+	CNSS_LOAD_REGDB_FAIL,
+	CNSS_LOAD_REGDB_SUCCESS,
+	CNSS_PROBE_FAIL,
+	CNSS_PROBE_SUCCESS,
+};
+#endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
 
 struct icnss_reg_info {
 	uint32_t mem_type;

@@ -285,7 +285,6 @@ enum pmgr_events {
 };
 
 enum filter_type {
-	UNKNOWN_FILTER,
 	SCID,
 	MID,
 	PROFILING_TAG,
@@ -295,7 +294,8 @@ enum filter_type {
 	MEMTAGOPS,
 	MULTISCID,
 	DIRTYINFO,
-	ADDR_MASK
+	ADDR_MASK,
+	UNKNOWN,
 };
 
 #endif /* _SOC_QCOM_LLCC_EVENTS_H_ */
